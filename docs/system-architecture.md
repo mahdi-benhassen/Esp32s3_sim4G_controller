@@ -2,13 +2,13 @@
 
 ## 1. Purpose and scope
 
-This document describes the architecture of the original ESP-IDF firmware in this repository. The firmware is a reference implementation for an ESP32-S3 controller with two relay outputs, two dry-contact inputs, ADS1115 analog acquisition, a SIM7600 cellular modem, RS485, an SSD1306 display, and a DS3231 real-time clock. Its feature set is inspired by the publicly described KinCony B2 controller, but the source code and board profile are independent and do not claim to reproduce the commercial product schematic [1] [2].
+This document describes the architecture of the original ESP-IDF firmware in this repository. The firmware is a reference implementation for an ESP32-S3 controller with two relay outputs, two dry-contact inputs, ADS1115 analog acquisition, four configurable 1-Wire channels, optional SD storage, physical buttons, a SIM7600 cellular modem with SMS/voice/APN/PDP/GNSS controls, RS485/Modbus RTU, Wi-Fi station mode, optional MQTT with retained Home Assistant discovery, a read-only HTTP diagnostics API, an SSD1306 display, and a DS3231 real-time clock. Its feature set is inspired by the publicly described KinCony B2 controller, but the source code and board profile are independent and do not claim to reproduce the commercial product schematic [1] [2].
 
 The architecture favors explicit C code, ESP-IDF driver APIs, FreeRTOS tasks, and small subsystem interfaces. This makes the project suitable for a custom carrier board, laboratory prototype, or starting point for a production firmware review. It is not a mains-wiring design, a certified safety controller, or a complete cellular IoT product. Hardware protection, electrical isolation, antenna design, enclosure safety, secure provisioning, and regulatory approval remain system-level responsibilities.
 
 ## 2. System context
 
-The firmware runs on an ESP32-S3 using the native ESP-IDF build system. The controller acts as a local I/O coordinator: it samples inputs, controls relays, polls attached peripherals, exposes a local serial console, and uses the SIM7600 UART to receive SMS commands and issue modem operations. The current application does not establish a packet-data PPP/IP session; the modem interface is intentionally limited to AT transport, registration/status queries, SMS, and voice-call control [3].
+The firmware runs on an ESP32-S3 using the native ESP-IDF build system. The controller acts as a local I/O coordinator: it samples inputs, controls relays, polls attached peripherals, exposes a local serial console and read-only HTTP status API, publishes optional MQTT state and discovery, and uses the SIM7600 UART to receive SMS commands and issue modem operations. Wi-Fi station mode provides the IP transport for MQTT and HTTP; the SIM7600 service can configure and activate a PDP context but still does not establish an ESP-IDF PPP/IP session. Cellular operation remains hardware- and carrier-dependent for GNSS, APN, and data features [3].
 
 ```mermaid
 flowchart LR
@@ -21,7 +21,12 @@ flowchart LR
     analog[ADS1115\n4 analog channels]
     rtc[DS3231 RTC]
     oled[SSD1306 OLED]
-    rs485[RS485 transceiver]
+    rs485[RS485 / Modbus RTU]
+    wifi[Wi-Fi station]
+    mqtt[MQTT broker]
+    http[Read-only HTTP diagnostics]
+    onewire[1-Wire DS18B20 sensors]
+    sd[SD-card FAT storage]
     console[USB/UART console]
     board[Custom carrier board\npower, protection, connectors]
 
@@ -34,6 +39,11 @@ flowchart LR
     rtc <--> esp
     oled <--> esp
     esp <--> rs485
+    esp <--> wifi
+    wifi <--> mqtt
+    esp --> http
+    onewire --> esp
+    esp <--> sd
     board --- esp
     board --- relay
     board --- inputs
@@ -48,13 +58,13 @@ All board-specific routing is centralized in `main/b2_config.c` and exposed thro
 |---|---:|---|---|
 | Relay 1 / Relay 2 | GPIO4 / GPIO5 | Digital outputs with safe startup and active-polarity handling | Confirm driver input levels, reset state, coil isolation, and contact ratings. |
 | Dry input 1 / Dry input 2 | GPIO6 / GPIO7 | Debounced digital inputs | Confirm isolation, pull-up/down arrangement, active polarity, and field voltage. |
-| One-Wire 1–4 | GPIO8–GPIO11 | Reserved in the profile; no One-Wire driver is currently enabled | Confirm pull-up voltage and future bus topology before enabling a driver. |
+| One-Wire 1–4 | GPIO8–GPIO11 | Bit-banged DS18B20 service with ROM/presence/CRC handling | Confirm pull-up voltage, one sensor per channel assumptions, and bus topology. |
 | Modem power / reset / ring | GPIO12 / GPIO13 / GPIO14 | SIM7600 power sequencing, reset, and ring indication | Confirm polarity, pulse timing, level shifting, and modem carrier behavior. |
 | SIM7600 UART1 TX/RX | GPIO17 / GPIO18 | Native ESP-IDF UART AT transport | Confirm logic levels, cross-over, grounding, baud rate, and optional flow control. |
 | RS485 UART2 TX/RX/RTS | GPIO15 / GPIO16 / GPIO21 | UART with half-duplex direction control | Confirm DE/RE polarity, termination, biasing, isolation, and connector wiring. |
 | Shared I2C SDA/SCL | GPIO38 / GPIO39 | ADS1115, DS3231, and SSD1306 | Confirm pull-ups, bus voltage, addresses, and bus capacitance. |
-| SD/SPI reservation | GPIO34–GPIO37 | Pin reservation only; SD mounting is not enabled | Confirm voltage translation, chip-select behavior, and conflict-free routing. |
-| Boot/configuration controls | GPIO0 / GPIO45 / GPIO46 | ESP32-S3 boot/configuration reservations | Do not attach uncontrolled external drivers to boot-strapping pins. |
+| SD/SPI | GPIO34–GPIO37 | Optional SDSPI FAT mount and VFS storage service | Confirm voltage translation, chip-select behavior, card power, and conflict-free routing. |
+| Boot/configuration controls | GPIO0 / GPIO45 / GPIO46 | Debounced application button events; ROM boot behavior remains hardware-defined | Do not attach uncontrolled external drivers to boot-strapping pins. |
 
 The configuration validator rejects null configurations, invalid relay/input/I2C/UART pins, and relay assignments that collide with reserved boot pins. It does not prove that a PCB is electrically safe or that two peripheral devices do not conflict at runtime; those checks require the target schematic and hardware tests [4].
 
@@ -64,7 +74,7 @@ The project is organized as one ESP-IDF `main` component. The application layer 
 
 | Layer | Files | Responsibility |
 |---|---|---|
-| Application orchestration | `main/app_main.c` | Initializes NVS, networking primitives, board buses, relays, inputs, ADC, RTC, OLED, modem, console, and status task. |
+| Application orchestration | `main/app_main.c` | Initializes NVS, networking primitives, board buses, relays, inputs, ADC, RTC, OLED, modem, HTTP diagnostics, console, and status task. |
 | Board initialization | `main/b2_board.c`, `main/include/b2_board.h` | Configures GPIO, I2C, modem UART, and RS485 UART from the board profile. |
 | Board configuration | `main/b2_config.c`, `main/include/b2_config.h` | Defines the example pin map, electrical polarity flags, I2C frequency, and SPI reservations. |
 | Relay service | `main/b2_relay.c`, `main/include/b2_relay.h` | Provides mutex-protected set, toggle, and read operations with de-energized initialization. |
@@ -72,8 +82,16 @@ The project is organized as one ESP-IDF `main` component. The application layer 
 | Analog service | `main/b2_adc.c`, `main/include/b2_adc.h` | Performs ADS1115 single-shot reads and exposes voltage and 4–20 mA helper conversions. |
 | Time service | `main/b2_rtc.c`, `main/include/b2_rtc.h` | Reads and writes DS3231 time using BCD conversion over I2C. |
 | Display service | `main/b2_oled.c`, `main/include/b2_oled.h` | Sends a small four-line status view to an SSD1306 over I2C. |
-| Cellular service | `main/b2_modem.c`, `main/include/b2_modem.h` | Controls the SIM7600 UART, power/reset sequence, AT commands, SMS parsing/sending, dialing, hang-up, and status queries. |
-| Local diagnostics | `main/b2_console.c`, `main/include/b2_console.h` | Reads monitor stdin and exposes relay, input, ADC, modem, and help commands. |
+| Cellular service | `main/b2_modem.c`, `main/include/b2_modem.h` | Controls the SIM7600 UART, power/reset sequence, AT commands, SMS parsing/sending, dialing, hang-up, registration, APN/PDP activation, and hardware-gated GNSS parsing. |
+| 1-Wire service | `main/b2_onewire.c`, `main/include/b2_onewire.h` | Performs bounded DS18B20 reset, ROM/presence checks, conversion, scratchpad reads, and CRC validation. |
+| Storage service | `main/b2_storage.c`, `main/include/b2_storage.h` | Mounts optional SDSPI FAT storage and exposes bounded VFS file operations and card metadata. |
+| Button service | `main/b2_buttons.c`, `main/include/b2_buttons.h` | Debounces three configurable physical inputs and reports application-level button events. |
+| Settings service | `main/b2_settings.c`, `main/include/b2_settings.h` | Persists versioned relay, SMS, APN, Wi-Fi, and MQTT configuration in NVS with validation. |
+| Modbus service | `main/b2_modbus.c`, `main/include/b2_modbus.h` | Performs bounded RS485 Modbus RTU master transactions with CRC16 and direction control. |
+| Wi-Fi service | `main/b2_wifi.c`, `main/include/b2_wifi.h` | Starts station mode from persisted credentials, reconnects, and reports IP/RSSI state. |
+| MQTT service | `main/b2_mqtt.c`, `main/include/b2_mqtt.h` | Uses the ESP-IDF MQTT client for relay command subscriptions, JSON state publication, cross-service event publication, and retained Home Assistant discovery over Wi-Fi. |
+| HTTP diagnostics | `main/b2_http.c`, `main/include/b2_http.h` | Provides read-only `/health`, `/api/v1/capabilities`, and `/api/v1/status` endpoints through the native ESP-IDF HTTP server. |
+| Local diagnostics | `main/b2_console.c`, `main/include/b2_console.h` | Reads monitor stdin and exposes relay, sensor, storage, Modbus, Wi-Fi, MQTT, modem, HTTP, and help commands. |
 
 The project intentionally uses ESP-IDF and C standard interfaces rather than Arduino, PlatformIO, or MicroPython. The component dependency declaration is in `main/CMakeLists.txt`, and the target/build metadata is in the root `CMakeLists.txt`, `sdkconfig.defaults`, and `partitions.csv` [5].
 
@@ -81,7 +99,7 @@ The project intentionally uses ESP-IDF and C standard interfaces rather than Ard
 
 At boot, `app_main()` initializes NVS and repairs an incompatible or exhausted NVS partition by erasing and reinitializing it. It then initializes the ESP-IDF network interface and default event loop, followed by board buses and GPIO. Relay outputs are initialized before the remaining services so the safe startup state is established early.
 
-The dry-input task is started next. ADS1115, DS3231, and SSD1306 initialization failures are logged as warnings and do not stop the application. The same continuation behavior is used for SIM7600 startup: a missing modem leaves the local controller available while the modem service reports a warning. Finally, the console and five-second OLED/status refresh task are started, and the application announces that the controller is ready [3].
+The dry-input task is started next, followed by optional 1-Wire, SD-card, Wi-Fi, HTTP diagnostics, MQTT, ADS1115, DS3231, SSD1306, and SIM7600 initialization. Missing or unconfigured optional peripherals are logged as warnings and do not stop the local controller. The HTTP service starts as a read-only LAN diagnostic server; it does not expose relay write operations. The MQTT client starts only when enabled with a broker URI and relies on Wi-Fi station connectivity for transport. Finally, the console and five-second OLED/status refresh task are started, and the application announces that the controller is ready [3].
 
 ```mermaid
 sequenceDiagram
@@ -89,7 +107,8 @@ sequenceDiagram
     participant App as app_main
     participant Board as Board services
     participant IO as Relays / inputs
-    participant Periph as ADS1115 / DS3231 / OLED
+    participant Periph as ADS1115 / DS3231 / OLED / SD / 1-Wire
+    participant Network as Wi-Fi / HTTP / MQTT
     participant Modem as SIM7600
     participant UI as Console / OLED
 
@@ -97,7 +116,8 @@ sequenceDiagram
     App->>App: Initialize or repair NVS
     App->>Board: Initialize I2C, UARTs, GPIO
     App->>IO: Initialize relays and start input task
-    App->>Periph: Attempt ADC, RTC, OLED initialization
+    App->>Periph: Attempt ADC, RTC, OLED, SD, and 1-Wire initialization
+    App->>Network: Start Wi-Fi, HTTP diagnostics, and optional MQTT client
     App->>Modem: Start power sequence and AT service
     App->>UI: Start console and status task
     UI-->>App: Periodic diagnostics and status updates
@@ -119,17 +139,25 @@ The ADS1115 driver performs single-shot I2C conversions. Channels 1 and 2 are ex
 
 ### 6.4 Cellular modem
 
-The modem service owns the configured UART and serializes AT commands with a mutex. It performs power/reset sequencing, reads registration and signal status, parses text-mode incoming SMS notifications, sends SMS messages, and supports dialing and hang-up. The application converts SMS bodies to uppercase and accepts `RELAY1` or `RELAY2` commands with `ON`, `OFF`, or `TOGGLE` actions. There is no sender allow-list, message authentication, TLS session, APN persistence, or packet-data protocol in this reference implementation; these are mandatory production hardening items for unattended deployment [3].
+The modem service owns the configured UART and serializes AT commands with a mutex. It performs power/reset sequencing, reads registration and signal status, parses text-mode incoming SMS notifications, sends SMS messages, supports dialing and hang-up, configures the APN, requests PDP activation, and parses the SIM7600 `+CGNSSINFO` response when GNSS is enabled. The application converts SMS bodies to uppercase and accepts `RELAY1` or `RELAY2` commands with `ON`, `OFF`, or `TOGGLE` actions. There is no sender allow-list or message authentication by default. Wi-Fi, MQTT, and APN settings are persisted in the versioned NVS settings blob. Direct PDP activation is not an ESP-IDF PPP/IP data session. Sender authorization, TLS trust configuration, credential protection, GNSS antenna/variant validation, data-session management, and rate limiting remain mandatory production hardening items for unattended deployment [3].
 
-### 6.5 Display and diagnostics
+### 6.5 MQTT transport
 
-The OLED status task refreshes every five seconds with the firmware identity, relay states, modem registration/signal state, and dry-input states. The serial console provides on-demand input, ADC, and modem status. ESP-IDF log messages remain the primary diagnostic record during bring-up.
+When enabled, the MQTT service uses the ESP-IDF MQTT client and the Wi-Fi station interface. On connection it subscribes to `<base-topic>/relay/1/set` and `<base-topic>/relay/2/set`, accepting `ON`, `OFF`, and `TOGGLE` payloads. It publishes a compact JSON state document at `<base-topic>/state` after connection and after relay, input, and SMS events. It also publishes retained Home Assistant discovery documents for the two relay switches and two dry-contact binary sensors under the standard `homeassistant/.../config` namespace. The default topic namespace is `b2/controller`.
+
+### 6.6 HTTP diagnostics
+
+The HTTP service is intentionally read-only. It exposes `GET /health`, `GET /api/v1/capabilities`, and `GET /api/v1/status` on port 80. The status response normalizes relay, dry-input, Wi-Fi, MQTT, and modem registration/attachment/signal state into a small JSON document. It does not accept relay commands, implement authentication, or terminate TLS. The service is therefore suitable only for a trusted commissioning LAN until an access-control and certificate strategy is added.
+
+### 6.7 Display and diagnostics
+
+The OLED status task refreshes every five seconds with the firmware identity, relay states, modem registration/signal state, and Wi-Fi/MQTT connectivity. The serial console provides on-demand relay, input, ADC, 1-Wire, storage, Modbus, Wi-Fi, MQTT, modem, GNSS, APN/PDP, and HTTP status commands. ESP-IDF log messages remain the primary diagnostic record during bring-up.
 
 ## 7. Task and synchronization model
 
-The firmware uses FreeRTOS tasks supplied by ESP-IDF. The input task performs debounced sampling, the modem task receives and parses UART data, the console task reads monitor input, and the status task refreshes the OLED. Relay state is protected by a mutex. Modem command transport is serialized so that an asynchronous SMS notification cannot corrupt a foreground AT command transaction [6] [7] [9].
+The firmware uses FreeRTOS tasks supplied by ESP-IDF. The input task performs debounced sampling, the modem task receives and parses UART data, the console task reads monitor input, the HTTP server task handles bounded read-only requests, and the status task refreshes the OLED. Relay state is protected by a mutex. Modem command transport is serialized so that an asynchronous SMS notification cannot corrupt a foreground AT command transaction [6] [7] [9].
 
-The current design does not implement a global watchdog policy, persistent configuration schema, authenticated remote control, or a coordinated brownout recovery strategy. Those omissions are deliberate boundaries of the reference firmware and should be resolved before field deployment.
+The design now includes a versioned NVS configuration schema, but it still does not implement a global watchdog policy, authenticated remote control, encrypted credential storage, a cellular packet-data service, or a coordinated brownout recovery strategy. Those omissions are deliberate boundaries of the reference firmware and should be resolved before field deployment.
 
 ## 8. Build, partitioning, and release model
 

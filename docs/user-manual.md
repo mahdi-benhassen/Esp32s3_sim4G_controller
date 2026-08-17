@@ -10,17 +10,24 @@ Do not assume that the example GPIO profile is correct for your board. The firmw
 
 ## 2. What the system provides
 
-After installation, the firmware provides two local relay outputs, two debounced dry-contact inputs, four ADS1115 analog channels, RS485 UART initialization, a DS3231 RTC interface, an SSD1306 OLED status view, a SIM7600 AT-command service, a serial bring-up console, and SMS-based relay commands. The current reference application does not provide a PPP/IP data session, web server, MQTT service, sender authentication, or an application-level access-control policy [4].
+After installation, the firmware provides two local relay outputs, two debounced dry-contact inputs, four ADS1115 analog channels, four configurable 1-Wire/DS18B20 channels, SPI SD-card storage, three debounced physical-button inputs, RS485 UART with Modbus RTU master helpers, a DS3231 RTC interface, an SSD1306 OLED status view, a SIM7600 AT-command service with SMS, voice, APN/PDP, and hardware-gated GNSS controls, persisted NVS settings, Wi-Fi station mode, an optional MQTT client with retained Home Assistant discovery, a read-only HTTP diagnostics API, and a serial bring-up console. The reference application does not provide a PPP/IP cellular data session, authenticated HTTP write operations, proprietary Tuya/KCS integration, encrypted NVS credentials, or a complete application-level access-control policy [4].
 
 | Function | User-visible behavior |
 |---|---|
 | Relay 1 and Relay 2 | Safe de-energized startup; local console ON/OFF/TOGGLE commands; SMS ON/OFF/TOGGLE commands. |
 | Dry inputs | Debounced state changes are logged; current firmware does not automatically switch relays from input state. |
 | Analog channels | Console reads voltage on channels 1–2 and current helper values on channels 3–4. |
-| SIM7600 | AT transport, registration and signal status, incoming SMS parsing, SMS sending API, dialing, and hang-up. |
+| SIM7600 | AT transport, registration and signal status, incoming SMS parsing, SMS sending API, dialing, hang-up, APN/PDP commands, and GNSS enable/query APIs. |
 | OLED | Periodic display of relay states, modem registration/signal, and input states. |
 | RS485 | Native ESP-IDF UART half-duplex initialization; application protocol is not included. |
 | RTC | DS3231 read/write API over shared I2C; application time policy is not included. |
+| 1-Wire / DS18B20 | Four configurable bit-banged 1-Wire channels with ROM discovery, temperature conversion, and CRC validation. |
+| SD card | Optional SDSPI FAT mounting and safe application-path file access; verify SPI routing before insertion. |
+| Physical buttons | Debounced reset/download/configuration events; bootloader behavior remains controlled by the ESP32-S3 ROM and board design. |
+| Modbus RTU | Bounded RS485 master reads and writes with CRC16 validation; slave register maps remain application-specific. |
+| Wi-Fi | Persisted station credentials, reconnect behavior, IP/RSSI status, and local provisioning commands. |
+| MQTT | Optional broker client with relay command topics, retained JSON state, and retained Home Assistant discovery for relays and dry-contact sensors; configure TLS and access policy for production. |
+| HTTP diagnostics | Read-only `GET /health`, `/api/v1/capabilities`, and `/api/v1/status` endpoints on port 80 when the service is enabled; keep it LAN-only until authentication and TLS are added. |
 
 ## 3. Required equipment and information
 
@@ -136,7 +143,22 @@ The console is available through the ESP-IDF monitor’s standard input. Command
 | `input` | Reads both logical dry-input states. | `INPUT1=ON INPUT2=OFF` |
 | `adc 1` or `adc 2` | Reads a voltage helper for ADS1115 channel 1 or 2. | `ADC1=1.234 V` |
 | `adc 3` or `adc 4` | Reads a 4–20 mA helper for ADS1115 channel 3 or 4. | `ADC3=12.345 mA` |
-| `modem` | Queries modem status. | `MODEM registered=yes attached=no CSQ=18` |
+| `modem` | Queries modem registration and signal status. | `MODEM registered=yes attached=no CSQ=18` |
+| `modem gnss on/off/read` | Enables or disables GNSS, or reads the latest `+CGNSSINFO` fix data. | Reports fix validity, satellite count, UTC, latitude, longitude, altitude, and speed. |
+| `modem apn <operator-apn>` | Persists and applies the SIM7600 APN profile. | Reports `saved and applied` or a bounded modem error. |
+| `modem pdp` | Activates the configured SIM7600 packet-data context. | Reports PDP activation status; this does not create a PPP/IP netif. |
+| `onewire` | Reads DS18B20 sensor status/temperature for channel 1–4. | Reports ROM, presence, CRC, and temperature. |
+| `storage` | Reports SD-card mount and metadata. | Reports mounted state, capacity, and product identifier. |
+| `button` | Reports configured physical-button states/events. | Reports reset/download/configuration input states. |
+| `modbus read <id> <reg> <count>` | Reads holding registers from an RS485 Modbus RTU slave. | Returns register values or a bounded error. |
+| `modbus write <id> <reg> <value>` | Writes one holding register. | Returns transaction status. |
+| `wifi` | Queries Wi-Fi station state. | Reports enabled state, association, IP, SSID, and RSSI. |
+| `wifi set <ssid> <password>` | Stores station credentials in NVS; reboot is required. | Reports saved or validation error. |
+| `wifi off` | Disables persisted Wi-Fi station startup. | Reports saved state; reboot is required. |
+| `mqtt` | Queries MQTT state and broker/topic configuration. | Reports started, connected, URI, topic, and last message ID. |
+| `mqtt set <mqtt[s]://broker> [username] [password]` | Stores MQTT broker settings in NVS; reboot is required. | Reports saved or validation error. |
+| `mqtt off` | Disables persisted MQTT startup. | Reports saved state; reboot is required. |
+| `http` | Reports the read-only HTTP service and endpoint list. | Reports port 80 and `/health`, `/api/v1/status`, `/api/v1/capabilities`. |
 
 The console is a bring-up interface, not an authenticated operator interface. Do not expose it to an untrusted network or connect the monitor to a shared production console without access control.
 
@@ -144,7 +166,7 @@ The console is a bring-up interface, not an authenticated operator interface. Do
 
 Install the SIM card and antennas according to the modem carrier documentation. Confirm that the SIM is provisioned, unlocked if required, and allowed to register on the intended network. The modem must have a suitable supply, ground, UART level compatibility, and correct power-key/reset wiring.
 
-After boot, type `modem` periodically until the modem reports registration. Signal quality varies with the network and antenna environment. A modem that does not respond to initialization should be tested separately with a minimal `AT` command path before troubleshooting application SMS behavior.
+After boot, type `modem` periodically until the modem reports registration. Signal quality varies with the network and antenna environment. Use `modem apn <operator-apn>` to store and apply the carrier APN, then `modem pdp` to request packet-data activation. Use `modem gnss on` and `modem gnss read` only when the installed SIM7600 variant supports the GNSS command set and the GNSS antenna is connected with a suitable sky view. Direct PDP activation is not an ESP-IDF PPP/IP data session and does not by itself provide sockets or Internet access. A modem that does not respond to initialization should be tested separately with a minimal `AT` command path before troubleshooting application SMS behavior.
 
 The application accepts the following SMS bodies after converting lowercase letters to uppercase:
 
@@ -158,6 +180,24 @@ The application accepts the following SMS bodies after converting lowercase lett
 | `RELAY2 TOGGLE` | Toggles relay 2. |
 
 The reference parser does not authenticate the sender or return a confirmation SMS. Before unattended use, add a sender allow-list, message authentication, rate limiting, command acknowledgement policy, and a fail-safe behavior for modem loss. Never use SMS control as the only protection for hazardous equipment.
+
+### 9.1 Wi-Fi and MQTT commissioning
+
+Wi-Fi and MQTT are independent of the SIM7600 SMS path. Configure Wi-Fi first, then verify `wifi` reports an IP address. Configure MQTT with a reachable `mqtt://` or `mqtts://` URI. The client subscribes to `<base-topic>/relay/1/set` and `<base-topic>/relay/2/set`; payloads are `ON`, `OFF`, or `TOGGLE`. It publishes a JSON state message to `<base-topic>/state`, for example `{"relay1":false,"relay2":true,"input1":0,"input2":1}`. The default base topic is `b2/controller`.
+
+The reference implementation stores broker credentials in the versioned NVS settings blob and does not provision certificates or enforce broker authorization. Use `mqtts://` with a properly configured ESP-IDF TLS trust model and add credential protection before production deployment. When connected, the client publishes retained Home Assistant discovery documents for the two relays and two dry-contact inputs under the standard `homeassistant/.../config` topics. Do not expose the local console, read-only HTTP service, or an unauthenticated broker to an untrusted network.
+
+### 9.2 Read-only HTTP diagnostics
+
+When the HTTP service is running, use the controller’s Wi-Fi address from another device on the same trusted LAN:
+
+```bash
+curl http://CONTROLLER_IP/health
+curl http://CONTROLLER_IP/api/v1/capabilities
+curl http://CONTROLLER_IP/api/v1/status
+```
+
+The status endpoint reports relay state, dry-input state, Wi-Fi association and RSSI, MQTT connection state, and SIM7600 registration/attachment/signal information. It does not accept relay write commands. The service has no authentication or TLS in this reference implementation; treat it as a commissioning and trusted-LAN diagnostic feature only.
 
 ## 10. Updating firmware
 

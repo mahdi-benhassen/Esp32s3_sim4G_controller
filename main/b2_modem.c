@@ -207,7 +207,7 @@ esp_err_t b2_modem_send_sms(const char *number, const char *message)
         return ESP_ERR_TIMEOUT;
     }
     char command[96] = {0};
-    snprintf(command, sizeof(command), "AT+CMGS=\\\"%s\\\"\\r", number);
+    snprintf(command, sizeof(command), "AT+CMGS=\"%s\"\r", number);
     uart_flush_input(cfg->modem_uart);
     uart_write_bytes(cfg->modem_uart, command, strlen(command));
     bool prompt = false;
@@ -263,6 +263,73 @@ esp_err_t b2_modem_dial(const char *number)
 esp_err_t b2_modem_hangup(void)
 {
     return b2_modem_command("ATH", NULL, 0, 3000);
+}
+
+esp_err_t b2_modem_set_apn(const char *apn)
+{
+    ESP_RETURN_ON_FALSE(apn != NULL && apn[0] != '\0', ESP_ERR_INVALID_ARG, TAG, "APN is empty");
+    ESP_RETURN_ON_FALSE(strchr(apn, '\"') == NULL && strchr(apn, '\r') == NULL && strchr(apn, '\n') == NULL,
+                       ESP_ERR_INVALID_ARG, TAG, "APN contains control characters");
+    char command[128] = {0};
+    const int length = snprintf(command, sizeof(command), "AT+CGDCONT=1,\"IP\",\"%s\"", apn);
+    ESP_RETURN_ON_FALSE(length > 0 && length < (int)sizeof(command), ESP_ERR_INVALID_SIZE, TAG, "APN command too long");
+    return b2_modem_command(command, NULL, 0, 3000);
+}
+
+esp_err_t b2_modem_activate_pdp(void)
+{
+    esp_err_t err = b2_modem_command("AT+CGATT=1", NULL, 0, 10000);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return b2_modem_command("AT+CGACT=1,1", NULL, 0, 15000);
+}
+
+esp_err_t b2_modem_gnss_enable(bool enable)
+{
+    return b2_modem_command(enable ? "AT+CGNSSPWR=1" : "AT+CGNSSPWR=0", NULL, 0, 5000);
+}
+
+esp_err_t b2_modem_gnss_get(b2_modem_gnss_t *gnss)
+{
+    ESP_RETURN_ON_FALSE(gnss != NULL, ESP_ERR_INVALID_ARG, TAG, "null GNSS result");
+    memset(gnss, 0, sizeof(*gnss));
+    char response[512] = {0};
+    esp_err_t err = b2_modem_command("AT+CGNSSINFO", response, sizeof(response), 5000);
+    if (err != ESP_OK) {
+        return err;
+    }
+    const char *prefix = strstr(response, "+CGNSSINFO:");
+    ESP_RETURN_ON_FALSE(prefix != NULL, ESP_ERR_NOT_FOUND, TAG, "GNSS response missing");
+    char fields[256] = {0};
+    snprintf(fields, sizeof(fields), "%s", prefix + strlen("+CGNSSINFO:"));
+    char *save = NULL;
+    char *field = strtok_r(fields, ",\r\n", &save);
+    char values[14][24] = {{0}};
+    unsigned index = 0;
+    while (field != NULL && index < 14U) {
+        snprintf(values[index], sizeof(values[index]), "%s", field);
+        field = strtok_r(NULL, ",\r\n", &save);
+        ++index;
+    }
+    gnss->enabled = true;
+    gnss->satellites = (index > 1U ? atoi(values[1]) : 0) + (index > 2U ? atoi(values[2]) : 0) +
+                       (index > 3U ? atoi(values[3]) : 0) + (index > 4U ? atoi(values[4]) : 0);
+    if (index > 8U && values[5][0] != '\0' && values[7][0] != '\0') {
+        gnss->fix_valid = true;
+        snprintf(gnss->latitude, sizeof(gnss->latitude), "%.9s%.9s", values[5], values[6]);
+        snprintf(gnss->longitude, sizeof(gnss->longitude), "%.9s%.9s", values[7], values[8]);
+        if (index > 11U) {
+            snprintf(gnss->altitude_m, sizeof(gnss->altitude_m), "%.15s", values[11]);
+        }
+        if (index > 12U) {
+            snprintf(gnss->speed_knots, sizeof(gnss->speed_knots), "%.15s", values[12]);
+        }
+        if (index > 10U) {
+            snprintf(gnss->utc, sizeof(gnss->utc), "%.11s %.11s", values[9], values[10]);
+        }
+    }
+    return ESP_OK;
 }
 
 esp_err_t b2_modem_get_status(b2_modem_status_t *status)

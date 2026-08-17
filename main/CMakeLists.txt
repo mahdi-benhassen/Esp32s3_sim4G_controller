@@ -10,6 +10,14 @@ idf_component_register(
         "b2_oled.c"
         "b2_modem.c"
         "b2_console.c"
+        "b2_onewire.c"
+        "b2_storage.c"
+        "b2_buttons.c"
+        "b2_settings.c"
+        "b2_modbus.c"
+        "b2_wifi.c"
+        "b2_mqtt.c"
+        "b2_http.c"
     INCLUDE_DIRS
         "."
         "include"
@@ -19,7 +27,11 @@ idf_component_register(
         esp_netif
         esp_eth
         esp_wifi
+        mqtt
+        esp_http_server
+        fatfs
         nvs_flash
+        sdmmc
         esp_timer
         freertos
         log

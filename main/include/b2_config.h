@@ -50,6 +50,7 @@ typedef struct {
     int sd_cs;
     bool relay_active_high;
     bool dry_input_active_low;
+    bool button_active_low;
 } b2_board_config_t;
 
 const b2_board_config_t *b2_config_get(void);

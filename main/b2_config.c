@@ -36,6 +36,7 @@ static const b2_board_config_t s_board = {
     .sd_cs = 34,
     .relay_active_high = true,
     .dry_input_active_low = true,
+    .button_active_low = true,
 };
 
 const b2_board_config_t *b2_config_get(void)
