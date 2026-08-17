@@ -10,7 +10,7 @@ Do not assume that the example GPIO profile is correct for your board. The firmw
 
 ## 2. What the system provides
 
-After installation, the firmware provides two local relay outputs, two debounced dry-contact inputs, four ADS1115 analog channels, four configurable 1-Wire/DS18B20 channels, SPI SD-card storage, three debounced physical-button inputs, RS485 UART with Modbus RTU master helpers, a DS3231 RTC interface, an SSD1306 OLED status view, a SIM7600 AT-command service with SMS, voice, APN/PDP, and hardware-gated GNSS controls, persisted NVS settings, Wi-Fi station mode, an optional MQTT client with retained Home Assistant discovery, a read-only HTTP diagnostics API, and a serial bring-up console. The reference application does not provide a PPP/IP cellular data session, authenticated HTTP write operations, proprietary Tuya/KCS integration, encrypted NVS credentials, or a complete application-level access-control policy [4].
+After installation, the firmware provides two local relay outputs, two debounced dry-contact inputs, four ADS1115 analog channels with persisted calibration, four configurable 1-Wire/DS18B20 channels, SPI SD-card storage, three debounced physical-button inputs, RS485 UART with Modbus RTU master helpers, a DS3231 RTC interface, an SSD1306 OLED status view, a SIM7600 AT-command service with SMS, voice, APN/PDP, and hardware-gated GNSS controls, plus an opt-in native Espressif `esp_modem` SIM7600 PPP/IP data mode, versioned and optionally encrypted NVS settings, Wi-Fi station mode, a policy-controlled MQTT client with TLS and Home Assistant discovery, optional HTTPS diagnostics with bearer-authenticated relay writes, a local rule engine, structured event history, verified HTTPS OTA with rollback confirmation, and a serial bring-up console. The reference application still does not provide verified Ethernet/BLE carrier profiles or proprietary Tuya/KCS integration [4]; PPP/IP cellular data is available only through the explicit mutually exclusive build mode described in Section 9.
 
 | Function | User-visible behavior |
 |---|---|
@@ -26,8 +26,8 @@ After installation, the firmware provides two local relay outputs, two debounced
 | Physical buttons | Debounced reset/download/configuration events; bootloader behavior remains controlled by the ESP32-S3 ROM and board design. |
 | Modbus RTU | Bounded RS485 master reads and writes with CRC16 validation; slave register maps remain application-specific. |
 | Wi-Fi | Persisted station credentials, reconnect behavior, IP/RSSI status, and local provisioning commands. |
-| MQTT | Optional broker client with relay command topics, retained JSON state, and retained Home Assistant discovery for relays and dry-contact sensors; configure TLS and access policy for production. |
-| HTTP diagnostics | Read-only `GET /health`, `/api/v1/capabilities`, and `/api/v1/status` endpoints on port 80 when the service is enabled; keep it LAN-only until authentication and TLS are added. |
+| MQTT | Optional broker client with `mqtts://` certificate validation, explicit plaintext override, relay command topics, versioned JSON state/event telemetry, and retained Home Assistant discovery for relays and dry-contact sensors. |
+| HTTP diagnostics | Read-only `GET /health`, `/api/v1/capabilities`, and `/api/v1/status` endpoints; if `server.crt` and `server.key` are present on the SD card, the service uses HTTPS on port 443 and enables bearer-authenticated relay writes, event export, self-test, and reboot diagnostics. Plain HTTP fallback never exposes control endpoints. |
 
 ## 3. Required equipment and information
 
@@ -158,15 +158,25 @@ The console is available through the ESP-IDF monitor’s standard input. Command
 | `mqtt` | Queries MQTT state and broker/topic configuration. | Reports started, connected, URI, topic, and last message ID. |
 | `mqtt set <mqtt[s]://broker> [username] [password]` | Stores MQTT broker settings in NVS; reboot is required. | Reports saved or validation error. |
 | `mqtt off` | Disables persisted MQTT startup. | Reports saved state; reboot is required. |
-| `http` | Reports the read-only HTTP service and endpoint list. | Reports port 80 and `/health`, `/api/v1/status`, `/api/v1/capabilities`. |
+| `cal <1..4> <gain> <offset>` | Persists per-channel analog calibration. | Example: `cal 1 1.002 -0.004`; reboot to apply. |
+| `rule <index> input <channel> <duration-ms> relay <1|2> <on|off>` | Persists an input-duration local rule. | Example: `rule 1 input 0 10000 relay 2 toggle`; reboot to apply. |
+| `rule <index> adc <channel> above <threshold> relay <1|2> <on|off>` | Persists an analog-threshold local rule. | Example: `rule 2 adc 0 above 2.500 relay 1 off`; reboot to apply. |
+| `rule <index> disable` | Clears one persisted rule slot. | Reports saved state; reboot to apply. |
+| `rules` | Lists persisted local rules. | Reports condition, source, action, target, duration, and threshold. |
+| `http` | Reports HTTP/HTTPS service state and endpoint policy. | Reports TLS state, port, and whether control endpoints are enabled. |
+| `time` | Reports SNTP/RTC synchronization state and timezone. | Reports `TIME started=yes synchronized=yes TZ=...`. |
+| `events` | Reports event count and latest event. | Use authenticated HTTPS `/api/v1/events` for a bounded JSON export. |
+| `ota status` | Reports bootloader rollback-verification state. | Reports `pending_verification=yes|no`. |
 
-The console is a bring-up interface, not an authenticated operator interface. Do not expose it to an untrusted network or connect the monitor to a shared production console without access control.
+The console is a bring-up and provisioning interface, not an authenticated operator interface. Do not expose it to an untrusted network or connect the monitor to a shared production console without access control. Rule and calibration commands write NVS and explicitly require a reboot before the runtime service reloads them.
 
 ## 9. SIM7600 installation and SMS control
 
 Install the SIM card and antennas according to the modem carrier documentation. Confirm that the SIM is provisioned, unlocked if required, and allowed to register on the intended network. The modem must have a suitable supply, ground, UART level compatibility, and correct power-key/reset wiring.
 
 After boot, type `modem` periodically until the modem reports registration. Signal quality varies with the network and antenna environment. Use `modem apn <operator-apn>` to store and apply the carrier APN, then `modem pdp` to request packet-data activation. Use `modem gnss on` and `modem gnss read` only when the installed SIM7600 variant supports the GNSS command set and the GNSS antenna is connected with a suitable sky view. Direct PDP activation is not an ESP-IDF PPP/IP data session and does not by itself provide sockets or Internet access. A modem that does not respond to initialization should be tested separately with a minimal `AT` command path before troubleshooting application SMS behavior.
+
+For routable cellular IP data, enable `CONFIG_B2_CELLULAR_PPP_ENABLED=y` with `idf.py menuconfig` or a release-specific `sdkconfig` override, set the APN and PAP/CHAP credentials through the persisted settings path, and rebuild. PPP mode uses the official Espressif `esp_modem` SIM7600 DCE and creates a native PPP netif. It owns the modem UART exclusively; the legacy AT/SMS/GNSS service is not started in this mode, so use PPP mode for IP transport testing and the default mode for SMS/voice/GNSS testing. The MQTT and HTTP services bind to the normal ESP-IDF network stack and expose `transport` and `cellular_connected` fields in status telemetry when PPP obtains an address. Validate attach, PDP activation, netif-up, retry/backoff, and `/health` access with Wi-Fi credentials removed before unattended deployment.
 
 The application accepts the following SMS bodies after converting lowercase letters to uppercase:
 
@@ -179,15 +189,15 @@ The application accepts the following SMS bodies after converting lowercase lett
 | `RELAY2 OFF` | De-energizes relay 2. |
 | `RELAY2 TOGGLE` | Toggles relay 2. |
 
-The reference parser does not authenticate the sender or return a confirmation SMS. Before unattended use, add a sender allow-list, message authentication, rate limiting, command acknowledgement policy, and a fail-safe behavior for modem loss. Never use SMS control as the only protection for hazardous equipment.
+Production SMS control requires the persisted authorization policy. Configure an explicit sender allow-list and, where required, the shared-secret token policy; the firmware applies replay and rate controls and records accepted/rejected events. Never use SMS control as the only protection for hazardous equipment, and validate the modem’s carrier behavior before unattended deployment.
 
 ### 9.1 Wi-Fi and MQTT commissioning
 
 Wi-Fi and MQTT are independent of the SIM7600 SMS path. Configure Wi-Fi first, then verify `wifi` reports an IP address. Configure MQTT with a reachable `mqtt://` or `mqtts://` URI. The client subscribes to `<base-topic>/relay/1/set` and `<base-topic>/relay/2/set`; payloads are `ON`, `OFF`, or `TOGGLE`. It publishes a JSON state message to `<base-topic>/state`, for example `{"relay1":false,"relay2":true,"input1":0,"input2":1}`. The default base topic is `b2/controller`.
 
-The reference implementation stores broker credentials in the versioned NVS settings blob and does not provision certificates or enforce broker authorization. Use `mqtts://` with a properly configured ESP-IDF TLS trust model and add credential protection before production deployment. When connected, the client publishes retained Home Assistant discovery documents for the two relays and two dry-contact inputs under the standard `homeassistant/.../config` topics. Do not expose the local console, read-only HTTP service, or an unauthenticated broker to an untrusted network.
+Broker credentials and the CA certificate are stored in the versioned settings model; enable encrypted NVS provisioning for production. Use an `mqtts://` URI and configure the CA certificate through the supported settings path. Plain `mqtt://` is rejected unless the operator explicitly enables the plaintext override. State JSON includes schema version, relays, inputs, DS18B20 temperatures, modem registration/CSQ, Wi-Fi connectivity/RSSI, and event count. Retained Home Assistant discovery remains available for relays and dry-contact inputs. Do not expose the console or plaintext HTTP fallback to an untrusted network.
 
-### 9.2 Read-only HTTP diagnostics
+### 9.2 HTTP/HTTPS diagnostics
 
 When the HTTP service is running, use the controller’s Wi-Fi address from another device on the same trusted LAN:
 
@@ -197,7 +207,13 @@ curl http://CONTROLLER_IP/api/v1/capabilities
 curl http://CONTROLLER_IP/api/v1/status
 ```
 
-The status endpoint reports relay state, dry-input state, Wi-Fi association and RSSI, MQTT connection state, and SIM7600 registration/attachment/signal information. It does not accept relay write commands. The service has no authentication or TLS in this reference implementation; treat it as a commissioning and trusted-LAN diagnostic feature only.
+The status endpoint reports relay state, dry-input state, Wi-Fi association and RSSI, MQTT connection state, SIM7600 registration/attachment/signal information, and the active transport/cellular PPP state when enabled. For production HTTPS, place a PEM certificate at `server.crt` and the matching private key at `server.key` in the SD-card root. The service then listens on port 443. Supply `Authorization: Bearer <configured-token>` and POST `ON`, `OFF`, or `TOGGLE` to `/api/v1/relay/1` or `/api/v1/relay/2`. Authenticated HTTPS-only diagnostics are also available at `GET /api/v1/events`, `GET /api/v1/self-test`, and `POST /api/v1/reboot`; all control requests share a ten-second rate limit. If the certificate/key pair is absent, the service falls back to read-only HTTP on port 80 and all control requests are rejected. Pin the deployed certificate fingerprint in the operator procedure.
+
+### 9.3 Security provisioning and OTA rollback
+
+The partition table includes `nvs_keys` for encrypted NVS key material. A production provisioning station must generate and burn the NVS encryption key using Espressif’s documented secure-NVS procedure; do not place private keys or plaintext passwords in the repository. The firmware continues to support a development fallback when secure provisioning is not available, but unattended deployment should reject that workflow in the release checklist.
+
+Verified HTTPS OTA requires an `https://` image URL and a trusted CA certificate. The native `esp_https_ota` path validates the server certificate, installs into the inactive OTA slot, and reboots. The application confirms the new image only after its core initialization succeeds; a failed boot remains pending and is eligible for the bootloader rollback policy. Secure Boot v2 and image-signing keys must be enabled and provisioned on production hardware separately from source compilation.
 
 ## 10. Updating firmware
 
@@ -241,13 +257,24 @@ Check the shared I2C pins, pull-ups, supply voltage, device address, and wiring.
 
 ### The modem does not register
 
-First verify `AT` communication, modem power/reset timing, SIM insertion, antenna connections, SIM status, and network coverage. Use `modem` to inspect registration, attachment, and CSQ. The firmware does not currently create a packet-data session, so successful SMS registration is not proof that IP networking is configured.
+First verify `AT` communication, modem power/reset timing, SIM insertion, antenna connections, SIM status, and network coverage. Use `modem` to inspect registration, attachment, and CSQ. In the default AT mode, the firmware does not create a PPP packet-data session, so successful SMS registration is not proof that IP networking is configured. For IP validation, use the explicit PPP build mode described above and confirm the native PPP netif receives an address.
 
 ### SMS commands do not operate a relay
 
 Use the exact command strings, confirm modem registration, inspect the serial log for the received SMS, and verify relay wiring and polarity locally with the console. Remember that the reference implementation does not send acknowledgement SMS messages and does not provide sender authentication.
 
-## 12. Safe shutdown and maintenance
+## 12. Hardware-in-the-loop acceptance and maintenance
+
+The repository includes `test_host/hil_bringup.py` for the final assembled-board smoke test. Install `pyserial` on the technician workstation, connect the USB serial port, and run:
+
+```bash
+python3 -m pip install pyserial
+python3 test_host/hil_bringup.py --port /dev/ttyACM0
+```
+
+The script exercises `help`, input, analog, modem, SD, button, time, event-log, and OTA-status queries. It is intentionally read-only and does not energize relays. Record the board profile, supply voltage, modem variant, antenna result, serial output, and any expected missing-peripheral warnings with the release artifact checksum. Treat this script as a bring-up smoke test, not as a substitute for relay-load, EMC/ESD, surge, thermal, or cellular certification testing.
+
+## 13. Safe shutdown and maintenance
 
 Before removing the USB cable or modem supply, switch relays to the safe state and disconnect hazardous loads. Keep the firmware, board profile, schematic, release artifact checksum, and installation record together. Repeat the relay safe-state test after every hardware revision, firmware update, or configuration change.
 

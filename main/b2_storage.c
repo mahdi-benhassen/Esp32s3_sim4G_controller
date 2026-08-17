@@ -103,6 +103,21 @@ esp_err_t b2_storage_write_text(const char *relative_path, const char *text)
     return ESP_OK;
 }
 
+esp_err_t b2_storage_append_text(const char *relative_path, const char *text)
+{
+    ESP_RETURN_ON_FALSE(text != NULL, ESP_ERR_INVALID_ARG, TAG, "null text");
+    ESP_RETURN_ON_FALSE(s_mounted, ESP_ERR_INVALID_STATE, TAG, "SD card is not mounted");
+    char path[128] = {0};
+    ESP_RETURN_ON_ERROR(make_path(relative_path, path, sizeof(path)), TAG, "make storage path");
+    FILE *file = fopen(path, "a");
+    ESP_RETURN_ON_FALSE(file != NULL, ESP_FAIL, TAG, "open storage file for append");
+    size_t length = strlen(text);
+    size_t written = fwrite(text, 1, length, file);
+    int close_result = fclose(file);
+    ESP_RETURN_ON_FALSE(written == length && close_result == 0, ESP_FAIL, TAG, "append storage file");
+    return ESP_OK;
+}
+
 esp_err_t b2_storage_read_text(const char *relative_path, char *buffer, size_t buffer_size)
 {
     ESP_RETURN_ON_FALSE(buffer != NULL && buffer_size > 0, ESP_ERR_INVALID_ARG, TAG, "invalid read buffer");

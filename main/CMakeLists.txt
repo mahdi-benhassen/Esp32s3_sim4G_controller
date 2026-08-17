@@ -14,10 +14,17 @@ idf_component_register(
         "b2_storage.c"
         "b2_buttons.c"
         "b2_settings.c"
+        "b2_security.c"
+        "b2_runtime.c"
+        "b2_eventlog.c"
+        "b2_rules.c"
         "b2_modbus.c"
         "b2_wifi.c"
         "b2_mqtt.c"
         "b2_http.c"
+        "b2_ota.c"
+        "b2_time.c"
+        "b2_cellular.c"
     INCLUDE_DIRS
         "."
         "include"
@@ -29,6 +36,10 @@ idf_component_register(
         esp_wifi
         mqtt
         esp_http_server
+        esp_https_ota
+        esp_https_server
+        esp_modem
+        app_update
         fatfs
         nvs_flash
         sdmmc

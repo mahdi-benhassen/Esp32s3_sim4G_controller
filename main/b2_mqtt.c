@@ -1,7 +1,14 @@
 #include "b2_mqtt.h"
 
+#include "b2_cellular.h"
+#include "b2_config.h"
+#include "b2_adc.h"
+#include "b2_eventlog.h"
 #include "b2_inputs.h"
+#include "b2_modem.h"
+#include "b2_onewire.h"
 #include "b2_relay.h"
+#include "b2_wifi.h"
 #include "b2_settings.h"
 #include "mqtt_client.h"
 #include "esp_check.h"
@@ -16,6 +23,9 @@ static bool s_connected;
 static int s_last_message_id = -1;
 static char s_uri[128];
 static char s_base_topic[96];
+static char s_username[65];
+static char s_password[65];
+static char s_ca_certificate[2048];
 
 static bool build_topic(char *out, size_t capacity, const char *suffix)
 {
@@ -64,6 +74,25 @@ static esp_err_t publish_switch_discovery(uint8_t channel)
     char object_id[64] = {0};
     snprintf(object_id, sizeof(object_id), "b2_esp32s3_controller_relay%u", number);
     return publish_discovery_config("switch", object_id, payload);
+}
+
+static esp_err_t publish_sensor_discovery(const char *object_id, const char *name, const char *value_template, const char *unit, const char *device_class)
+{
+    char state_topic[128] = {0};
+    char payload[768] = {0};
+    ESP_RETURN_ON_FALSE(build_topic(state_topic, sizeof(state_topic), "state"), ESP_ERR_INVALID_SIZE, TAG, "state topic too large");
+    const int length = snprintf(payload, sizeof(payload),
+                                 "{\"name\":\"%s\",\"unique_id\":\"%s\",\"state_topic\":\"%s\",\"value_template\":\"{{ %s }}\",\"unit_of_measurement\":\"%s\",%s\"device\":{\"identifiers\":[\"b2_esp32s3_controller\"],\"name\":\"B2 ESP32-S3 Controller\",\"manufacturer\":\"Independent ESP-IDF firmware\",\"model\":\"B2-compatible\"}}",
+                                 name, object_id, state_topic, value_template, unit, device_class != NULL ? "\"device_class\":\"" : "");
+    if (device_class != NULL && length > 0 && length < (int)sizeof(payload)) {
+        char fixed[768] = {0};
+        snprintf(fixed, sizeof(fixed),
+                 "{\"name\":\"%s\",\"unique_id\":\"%s\",\"state_topic\":\"%s\",\"value_template\":\"{{ %s }}\",\"unit_of_measurement\":\"%s\",\"device_class\":\"%s\",\"device\":{\"identifiers\":[\"b2_esp32s3_controller\"],\"name\":\"B2 ESP32-S3 Controller\",\"manufacturer\":\"Independent ESP-IDF firmware\",\"model\":\"B2-compatible\"}}",
+                 name, object_id, state_topic, value_template, unit, device_class);
+        snprintf(payload, sizeof(payload), "%s", fixed);
+    }
+    ESP_RETURN_ON_FALSE(length > 0 && length < (int)sizeof(payload), ESP_ERR_INVALID_SIZE, TAG, "sensor discovery payload too large");
+    return publish_discovery_config("sensor", object_id, payload);
 }
 
 static esp_err_t publish_binary_sensor_discovery(uint8_t channel)
@@ -147,13 +176,24 @@ esp_err_t b2_mqtt_start(void)
     ESP_RETURN_ON_ERROR(b2_settings_load(&settings), TAG, "load MQTT settings");
     ESP_RETURN_ON_FALSE(settings.mqtt_enabled && settings.mqtt_uri[0] != '\0', ESP_ERR_NOT_FOUND, TAG, "MQTT disabled or URI missing");
 
+    const bool tls_uri = strncasecmp(settings.mqtt_uri, "mqtts://", 8) == 0;
+    const bool plaintext_uri = strncasecmp(settings.mqtt_uri, "mqtt://", 7) == 0;
+    ESP_RETURN_ON_FALSE(tls_uri || plaintext_uri, ESP_ERR_INVALID_ARG, TAG, "MQTT URI must use mqtt:// or mqtts://");
+    ESP_RETURN_ON_FALSE(tls_uri || settings.mqtt_allow_plaintext, ESP_ERR_INVALID_STATE, TAG, "plaintext MQTT disabled by policy");
+    snprintf(s_username, sizeof(s_username), "%s", settings.mqtt_username);
+    snprintf(s_password, sizeof(s_password), "%s", settings.mqtt_password);
+    snprintf(s_ca_certificate, sizeof(s_ca_certificate), "%s", settings.mqtt_ca_certificate);
     esp_mqtt_client_config_t config = {0};
     config.broker.address.uri = settings.mqtt_uri;
-    if (settings.mqtt_username[0] != '\0') {
-        config.credentials.username = settings.mqtt_username;
+    if (s_username[0] != '\0') {
+        config.credentials.username = s_username;
     }
-    if (settings.mqtt_password[0] != '\0') {
-        config.credentials.authentication.password = settings.mqtt_password;
+    if (s_password[0] != '\0') {
+        config.credentials.authentication.password = s_password;
+    }
+    if (tls_uri && s_ca_certificate[0] != '\0') {
+        config.broker.verification.certificate = s_ca_certificate;
+        config.broker.verification.certificate_len = strlen(s_ca_certificate);
     }
     s_client = esp_mqtt_client_init(&config);
     ESP_RETURN_ON_FALSE(s_client != NULL, ESP_ERR_NO_MEM, TAG, "create MQTT client");
@@ -194,24 +234,85 @@ esp_err_t b2_mqtt_publish_home_assistant_discovery(void)
     ESP_RETURN_ON_ERROR(publish_switch_discovery(0), TAG, "publish relay 1 discovery");
     ESP_RETURN_ON_ERROR(publish_switch_discovery(1), TAG, "publish relay 2 discovery");
     ESP_RETURN_ON_ERROR(publish_binary_sensor_discovery(0), TAG, "publish input 1 discovery");
-    return publish_binary_sensor_discovery(1);
+    ESP_RETURN_ON_ERROR(publish_binary_sensor_discovery(1), TAG, "publish input 2 discovery");
+    for (uint8_t i = 0; i < B2_ONEWIRE_COUNT; ++i) {
+        char object_id[64] = {0};
+        char name[64] = {0};
+        char value_template[64] = {0};
+        snprintf(object_id, sizeof(object_id), "b2_esp32s3_controller_temp%u", (unsigned)(i + 1U));
+        snprintf(name, sizeof(name), "B2 Temperature %u", (unsigned)(i + 1U));
+        snprintf(value_template, sizeof(value_template), "value_json.temp%u", (unsigned)(i + 1U));
+        ESP_RETURN_ON_ERROR(publish_sensor_discovery(object_id, name, value_template, "°C", "temperature"), TAG, "publish temperature discovery");
+    }
+    ESP_RETURN_ON_ERROR(publish_sensor_discovery("b2_esp32s3_controller_csq", "B2 Modem CSQ", "value_json.csq", "", NULL), TAG, "publish CSQ discovery");
+    ESP_RETURN_ON_ERROR(publish_sensor_discovery("b2_esp32s3_controller_wifi_rssi", "B2 Wi-Fi RSSI", "value_json.wifi_rssi", "dBm", "signal_strength"), TAG, "publish RSSI discovery");
+    for (uint8_t i = 0; i < 4; ++i) {
+        char object_id[64] = {0};
+        char name[64] = {0};
+        char value_template[64] = {0};
+        snprintf(object_id, sizeof(object_id), "b2_esp32s3_controller_analog%u", (unsigned)(i + 1U));
+        snprintf(name, sizeof(name), "B2 Analog %u", (unsigned)(i + 1U));
+        snprintf(value_template, sizeof(value_template), "value_json.analog%u", (unsigned)(i + 1U));
+        ESP_RETURN_ON_ERROR(publish_sensor_discovery(object_id, name, value_template, i < 2 ? "V" : "mA", NULL), TAG, "publish analog discovery");
+    }
+    return ESP_OK;
 }
 
 esp_err_t b2_mqtt_publish_state(void)
 {
     ESP_RETURN_ON_FALSE(s_client != NULL && s_connected, ESP_ERR_INVALID_STATE, TAG, "MQTT is not connected");
     char topic[128] = {0};
-    char payload[160] = {0};
+    char payload[768] = {0};
     bool relay1 = false;
     bool relay2 = false;
     b2_relay_get(0, &relay1);
     b2_relay_get(1, &relay2);
     int input1 = b2_input_is_active(0) ? 1 : 0;
     int input2 = b2_input_is_active(1) ? 1 : 0;
-    int length = snprintf(payload, sizeof(payload), "{\"relay1\":%s,\"relay2\":%s,\"input1\":%d,\"input2\":%d}",
-                          relay1 ? "true" : "false", relay2 ? "true" : "false", input1, input2);
+    b2_modem_status_t modem = {0};
+    b2_modem_get_status(&modem);
+    b2_wifi_status_t wifi = {0};
+    b2_wifi_get_status(&wifi);
+    b2_cellular_status_t cellular = {0};
+    b2_cellular_get_status(&cellular);
+    const char *transport = wifi.connected ? "wifi" : (cellular.connected ? "cellular" : "none");
+    float temperatures[B2_ONEWIRE_COUNT] = {0};
+    bool temperature_valid[B2_ONEWIRE_COUNT] = {0};
+    float analog[4] = {0};
+    bool analog_valid[4] = {false, false, false, false};
+    for (uint8_t i = 0; i < B2_ONEWIRE_COUNT; ++i) {
+        temperature_valid[i] = b2_onewire_read_celsius(i, &temperatures[i]) == ESP_OK;
+    }
+    analog_valid[0] = b2_adc_read_voltage(0, &analog[0]) == ESP_OK;
+    analog_valid[1] = b2_adc_read_voltage(1, &analog[1]) == ESP_OK;
+    analog_valid[2] = b2_adc_read_4_20ma(2, &analog[2]) == ESP_OK;
+    analog_valid[3] = b2_adc_read_4_20ma(3, &analog[3]) == ESP_OK;
+    int length = snprintf(payload, sizeof(payload), "{\"schema\":1,\"relay1\":%s,\"relay2\":%s,\"input1\":%d,\"input2\":%d,\"modem_registered\":%s,\"csq\":%d,\"packet_attached\":%s,\"wifi_connected\":%s,\"wifi_rssi\":%d,\"cellular_enabled\":%s,\"cellular_connected\":%s,\"cellular_ip\":\"%s\",\"transport\":\"%s\",\"temp1\":%s%.2f,\"temp2\":%s%.2f,\"temp3\":%s%.2f,\"temp4\":%s%.2f,\"analog1\":%s%.3f,\"analog2\":%s%.3f,\"analog3\":%s%.3f,\"analog4\":%s%.3f,\"event_count\":%lu}",
+                          relay1 ? "true" : "false", relay2 ? "true" : "false", input1, input2,
+                          modem.registered ? "true" : "false", modem.signal_quality, modem.packet_attached ? "true" : "false",
+                          wifi.connected ? "true" : "false", wifi.rssi,
+                          cellular.enabled ? "true" : "false", cellular.connected ? "true" : "false", cellular.ip, transport,
+                          temperature_valid[0] ? "" : "null", temperatures[0],
+                          temperature_valid[1] ? "" : "null", temperatures[1],
+                          temperature_valid[2] ? "" : "null", temperatures[2], temperature_valid[3] ? "" : "null", temperatures[3],
+                          analog_valid[0] ? "" : "null", analog[0], analog_valid[1] ? "" : "null", analog[1],
+                          analog_valid[2] ? "" : "null", analog[2], analog_valid[3] ? "" : "null", analog[3],
+                          (unsigned long)b2_event_log_count());
     ESP_RETURN_ON_FALSE(length > 0 && length < (int)sizeof(payload), ESP_ERR_INVALID_SIZE, TAG, "MQTT state payload too large");
     ESP_RETURN_ON_FALSE(build_topic(topic, sizeof(topic), "state"), ESP_ERR_INVALID_SIZE, TAG, "MQTT topic too large");
+    s_last_message_id = esp_mqtt_client_publish(s_client, topic, payload, length, 1, 1);
+    return s_last_message_id >= 0 ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t b2_mqtt_publish_event(const char *event_name)
+{
+    ESP_RETURN_ON_FALSE(event_name != NULL && event_name[0] != '\0', ESP_ERR_INVALID_ARG, TAG, "empty MQTT event");
+    ESP_RETURN_ON_FALSE(s_client != NULL && s_connected, ESP_ERR_INVALID_STATE, TAG, "MQTT is not connected");
+    char topic[128] = {0};
+    char payload[160] = {0};
+    ESP_RETURN_ON_FALSE(build_topic(topic, sizeof(topic), "event"), ESP_ERR_INVALID_SIZE, TAG, "event topic too large");
+    int length = snprintf(payload, sizeof(payload), "{\"schema\":1,\"event\":\"%s\"}", event_name);
+    ESP_RETURN_ON_FALSE(length > 0 && length < (int)sizeof(payload), ESP_ERR_INVALID_SIZE, TAG, "event payload too large");
     s_last_message_id = esp_mqtt_client_publish(s_client, topic, payload, length, 1, 1);
     return s_last_message_id >= 0 ? ESP_OK : ESP_FAIL;
 }

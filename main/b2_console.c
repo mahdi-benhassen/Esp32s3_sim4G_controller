@@ -1,5 +1,6 @@
 #include "b2_adc.h"
 #include "b2_buttons.h"
+#include "b2_eventlog.h"
 #include "b2_inputs.h"
 #include "b2_http.h"
 #include "b2_modem.h"
@@ -8,6 +9,8 @@
 #include "b2_onewire.h"
 #include "b2_relay.h"
 #include "b2_storage.h"
+#include "b2_ota.h"
+#include "b2_time.h"
 #include "b2_settings.h"
 #include "b2_wifi.h"
 #include "esp_log.h"
@@ -21,7 +24,7 @@ static const char *TAG = "b2_console";
 
 static void print_help(void)
 {
-    printf("Commands: relay <1|2> <on|off|toggle>, input, adc <1..4>, onewire <1..4>, modbus read/write, wifi [set/off], mqtt [set/off], modem [gnss|apn|pdp], http, storage, button, help\n");
+    printf("Commands: relay <1|2> <on|off|toggle>, input, adc <1..4>, cal <1..4> <gain> <offset>, rule <index> ..., rules, onewire <1..4>, modbus read/write, wifi [set/off], mqtt [set/off], modem [gnss|apn|pdp], http, time, events, ota status, storage, button, help\n");
 }
 
 static void console_task(void *arg)
@@ -53,6 +56,19 @@ static void console_task(void *arg)
             printf("INPUT1=%s INPUT2=%s\n", b2_input_is_active(0) ? "ON" : "OFF", b2_input_is_active(1) ? "ON" : "OFF");
             continue;
         }
+        float gain = 0.0f;
+        float offset = 0.0f;
+        if (sscanf(line, "cal %u %f %f", &channel, &gain, &offset) == 3 && channel >= 1 && channel <= 4 && gain > 0.0f && gain < 1000.0f) {
+            b2_settings_t settings = {0};
+            esp_err_t err = b2_settings_load(&settings);
+            if (err == ESP_OK) {
+                settings.analog_gain[channel - 1U] = gain;
+                settings.analog_offset[channel - 1U] = offset;
+                err = b2_settings_save(&settings);
+            }
+            printf("CAL channel=%u %s; reboot to apply\n", channel, err == ESP_OK ? "saved" : esp_err_to_name(err));
+            continue;
+        }
         if (sscanf(line, "adc %u", &channel) == 1 && channel >= 1 && channel <= 4) {
             float value = 0.0f;
             if (channel <= 2) {
@@ -80,6 +96,75 @@ static void console_task(void *arg)
             }
             if (rom_err == ESP_OK) {
                 printf("1WIRE%u ROM=0x%016" PRIx64 "\n", channel, rom);
+            }
+            continue;
+        }
+        unsigned rule_index = 0;
+        unsigned rule_source = 0;
+        unsigned rule_duration = 0;
+        unsigned rule_target = 0;
+        char rule_action[8] = {0};
+        float rule_threshold = 0.0f;
+        if (sscanf(line, "rule %u input %u %u relay %u %7s", &rule_index, &rule_source, &rule_duration, &rule_target, rule_action) == 5 &&
+            rule_index >= 1 && rule_index <= B2_SETTINGS_RULE_COUNT && rule_source < 2 && rule_duration <= 86400000U && rule_target >= 1 && rule_target <= 2) {
+            b2_settings_t settings = {0};
+            esp_err_t err = b2_settings_load(&settings);
+            if (err == ESP_OK) {
+                b2_rule_t *rule = &settings.rules[rule_index - 1U];
+                memset(rule, 0, sizeof(*rule));
+                rule->enabled = true;
+                rule->condition = B2_RULE_INPUT_ACTIVE;
+                rule->source = (uint8_t)rule_source;
+                rule->duration_ms = rule_duration;
+                rule->action = strcasecmp(rule_action, "toggle") == 0 ? B2_RULE_ACTION_RELAY_TOGGLE : B2_RULE_ACTION_RELAY_SET;
+                rule->target = (uint8_t)(rule_target - 1U);
+                rule->action_state = strcasecmp(rule_action, "on") == 0;
+                err = b2_settings_save(&settings);
+            }
+            printf("RULE %u %s; reboot to apply\n", rule_index, err == ESP_OK ? "saved" : esp_err_to_name(err));
+            continue;
+        }
+        if (sscanf(line, "rule %u adc %u above %f relay %u %7s", &rule_index, &rule_source, &rule_threshold, &rule_target, rule_action) == 5 &&
+            rule_index >= 1 && rule_index <= B2_SETTINGS_RULE_COUNT && rule_source < 4 && rule_target >= 1 && rule_target <= 2) {
+            b2_settings_t settings = {0};
+            esp_err_t err = b2_settings_load(&settings);
+            if (err == ESP_OK) {
+                b2_rule_t *rule = &settings.rules[rule_index - 1U];
+                memset(rule, 0, sizeof(*rule));
+                rule->enabled = true;
+                rule->condition = B2_RULE_ADC_ABOVE;
+                rule->source = (uint8_t)rule_source;
+                rule->threshold = rule_threshold;
+                rule->action = strcasecmp(rule_action, "toggle") == 0 ? B2_RULE_ACTION_RELAY_TOGGLE : B2_RULE_ACTION_RELAY_SET;
+                rule->target = (uint8_t)(rule_target - 1U);
+                rule->action_state = strcasecmp(rule_action, "on") == 0;
+                err = b2_settings_save(&settings);
+            }
+            printf("RULE %u %s; reboot to apply\n", rule_index, err == ESP_OK ? "saved" : esp_err_to_name(err));
+            continue;
+        }
+        if (sscanf(line, "rule %u disable", &rule_index) == 1 && rule_index >= 1 && rule_index <= B2_SETTINGS_RULE_COUNT) {
+            b2_settings_t settings = {0};
+            esp_err_t err = b2_settings_load(&settings);
+            if (err == ESP_OK) {
+                memset(&settings.rules[rule_index - 1U], 0, sizeof(settings.rules[rule_index - 1U]));
+                err = b2_settings_save(&settings);
+            }
+            printf("RULE %u %s; reboot to apply\n", rule_index, err == ESP_OK ? "disabled" : esp_err_to_name(err));
+            continue;
+        }
+        if (strncmp(line, "rules", 5) == 0) {
+            b2_settings_t settings = {0};
+            esp_err_t err = b2_settings_load(&settings);
+            if (err == ESP_OK) {
+                for (uint8_t i = 0; i < settings.rule_count && i < B2_SETTINGS_RULE_COUNT; ++i) {
+                    printf("RULE%u enabled=%s condition=%u source=%u action=%u target=%u duration_ms=%" PRIu32 " threshold=%.3f\n",
+                           (unsigned)(i + 1U), settings.rules[i].enabled ? "yes" : "no", settings.rules[i].condition,
+                           settings.rules[i].source, settings.rules[i].action, settings.rules[i].target,
+                           settings.rules[i].duration_ms, settings.rules[i].threshold);
+                }
+            } else {
+                printf("RULES read failed: %s\n", esp_err_to_name(err));
             }
             continue;
         }
@@ -201,25 +286,46 @@ static void console_task(void *arg)
                 }
             } else if (strncmp(line, "modem apn ", 10) == 0) {
                 char apn[64] = {0};
-                if (sscanf(line + 10, "%63s", apn) == 1) {
+                char username[65] = {0};
+                char password[65] = {0};
+                char auth[8] = {0};
+                const int fields = sscanf(line + 10, "%63s %64s %64s %7s", apn, username, password, auth);
+                if (fields >= 1) {
+                    b2_apn_auth_type_t auth_type = B2_APN_AUTH_NONE;
+                    if (fields >= 4 && strcasecmp(auth, "pap") == 0) {
+                        auth_type = B2_APN_AUTH_PAP;
+                    } else if (fields >= 4 && strcasecmp(auth, "chap") == 0) {
+                        auth_type = B2_APN_AUTH_CHAP;
+                    } else if (fields >= 4) {
+                        printf("Usage: modem apn <apn> [username password pap|chap]\n");
+                        continue;
+                    }
                     b2_settings_t settings = {0};
                     esp_err_t err = b2_settings_load(&settings);
                     if (err == ESP_OK) {
                         snprintf(settings.apn, sizeof(settings.apn), "%s", apn);
+                        settings.apn_auth_type = auth_type;
+                        if (auth_type == B2_APN_AUTH_NONE) {
+                            settings.apn_username[0] = '\0';
+                            settings.apn_password[0] = '\0';
+                        } else {
+                            snprintf(settings.apn_username, sizeof(settings.apn_username), "%s", username);
+                            snprintf(settings.apn_password, sizeof(settings.apn_password), "%s", password);
+                        }
                         err = b2_settings_save(&settings);
                     }
                     if (err == ESP_OK) {
-                        err = b2_modem_set_apn(apn);
+                        err = b2_modem_set_apn_auth(apn, username, password, auth_type);
                     }
                     printf("APN %s\n", err == ESP_OK ? "saved and applied" : esp_err_to_name(err));
                 } else {
-                    printf("Usage: modem apn <operator-apn>\n");
+                    printf("Usage: modem apn <apn> [username password pap|chap]\n");
                 }
             } else if (strcmp(line, "modem pdp\n") == 0) {
                 b2_settings_t settings = {0};
                 esp_err_t err = b2_settings_load(&settings);
                 if (err == ESP_OK && settings.apn[0] != '\0') {
-                    err = b2_modem_set_apn(settings.apn);
+                    err = b2_modem_set_apn_auth(settings.apn, settings.apn_username, settings.apn_password, settings.apn_auth_type);
                 }
                 if (err == ESP_OK) {
                     err = b2_modem_activate_pdp();
@@ -229,15 +335,33 @@ static void console_task(void *arg)
                 b2_modem_status_t status = {0};
                 b2_modem_get_status(&status);
                 printf("MODEM registered=%s attached=%s CSQ=%d\n", status.registered ? "yes" : "no", status.packet_attached ? "yes" : "no", status.signal_quality);
-                printf("Usage: modem gnss on|off|read; modem apn <apn>; modem pdp\n");
+                printf("Usage: modem gnss on|off|read; modem apn <apn> [username password pap|chap]; modem pdp\n");
             }
             continue;
         }
         if (strncmp(line, "http", 4) == 0) {
             b2_http_status_t http = {0};
             b2_http_get_status(&http);
-            printf("HTTP started=%s port=%u endpoints=/health,/api/v1/status,/api/v1/capabilities\n",
-                   http.started ? "yes" : "no", http.port);
+            printf("HTTP started=%s tls=%s port=%u endpoints=/health,/api/v1/status,/api/v1/capabilities; relay writes=%s\n",
+                   http.started ? "yes" : "no", http.tls ? "yes" : "no", http.port, http.tls ? "HTTPS-only" : "disabled");
+            continue;
+        }
+        if (strncmp(line, "time", 4) == 0) {
+            b2_time_status_t time_status = {0};
+            b2_time_get_status(&time_status);
+            printf("TIME started=%s synchronized=%s TZ=%s\n", time_status.started ? "yes" : "no", time_status.synchronized ? "yes" : "no", time_status.timezone);
+            continue;
+        }
+        if (strncmp(line, "events", 6) == 0) {
+            printf("EVENTS count=%" PRIu32 "\n", b2_event_log_count());
+            b2_event_t event = {0};
+            if (b2_event_log_get_newest(0, &event) == ESP_OK) {
+                printf("LATEST seq=%" PRIu32 " type=%u source=%u value=%" PRId32 " text=%s\n", event.sequence, event.type, event.source, event.value, event.text);
+            }
+            continue;
+        }
+        if (strncmp(line, "ota status", 10) == 0) {
+            printf("OTA pending_verification=%s\n", b2_ota_is_pending_verify() ? "yes" : "no");
             continue;
         }
         if (strncmp(line, "storage", 7) == 0) {

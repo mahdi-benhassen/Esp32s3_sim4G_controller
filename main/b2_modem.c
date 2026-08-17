@@ -265,15 +265,34 @@ esp_err_t b2_modem_hangup(void)
     return b2_modem_command("ATH", NULL, 0, 3000);
 }
 
-esp_err_t b2_modem_set_apn(const char *apn)
+esp_err_t b2_modem_set_apn_auth(const char *apn, const char *username, const char *password, b2_apn_auth_type_t auth_type)
 {
     ESP_RETURN_ON_FALSE(apn != NULL && apn[0] != '\0', ESP_ERR_INVALID_ARG, TAG, "APN is empty");
-    ESP_RETURN_ON_FALSE(strchr(apn, '\"') == NULL && strchr(apn, '\r') == NULL && strchr(apn, '\n') == NULL,
-                       ESP_ERR_INVALID_ARG, TAG, "APN contains control characters");
-    char command[128] = {0};
-    const int length = snprintf(command, sizeof(command), "AT+CGDCONT=1,\"IP\",\"%s\"", apn);
+    ESP_RETURN_ON_FALSE(username != NULL && password != NULL, ESP_ERR_INVALID_ARG, TAG, "APN credentials are null");
+    ESP_RETURN_ON_FALSE(auth_type <= B2_APN_AUTH_CHAP, ESP_ERR_INVALID_ARG, TAG, "invalid APN auth type");
+    const char *credential_fields = auth_type == B2_APN_AUTH_NONE ? "" : (auth_type == B2_APN_AUTH_PAP ? ",1" : ",2");
+    ESP_RETURN_ON_FALSE(strchr(apn, '\"') == NULL && strchr(apn, '\r') == NULL && strchr(apn, '\n') == NULL &&
+                       strchr(username, '\"') == NULL && strchr(username, '\r') == NULL && strchr(username, '\n') == NULL &&
+                       strchr(password, '\"') == NULL && strchr(password, '\r') == NULL && strchr(password, '\n') == NULL,
+                       ESP_ERR_INVALID_ARG, TAG, "APN fields contain control characters");
+    char command[256] = {0};
+    int length = snprintf(command, sizeof(command), "AT+CGDCONT=1,\"IP\",\"%s\"", apn);
     ESP_RETURN_ON_FALSE(length > 0 && length < (int)sizeof(command), ESP_ERR_INVALID_SIZE, TAG, "APN command too long");
+    esp_err_t err = b2_modem_command(command, NULL, 0, 3000);
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (auth_type == B2_APN_AUTH_NONE) {
+        return b2_modem_command("AT+CGAUTH=1,0", NULL, 0, 3000);
+    }
+    length = snprintf(command, sizeof(command), "AT+CGAUTH=1%s,\"%s\",\"%s\"", credential_fields, username, password);
+    ESP_RETURN_ON_FALSE(length > 0 && length < (int)sizeof(command), ESP_ERR_INVALID_SIZE, TAG, "APN auth command too long");
     return b2_modem_command(command, NULL, 0, 3000);
+}
+
+esp_err_t b2_modem_set_apn(const char *apn)
+{
+    return b2_modem_set_apn_auth(apn, "", "", B2_APN_AUTH_NONE);
 }
 
 esp_err_t b2_modem_activate_pdp(void)

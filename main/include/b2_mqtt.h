@@ -20,6 +20,7 @@ esp_err_t b2_mqtt_start(void);
 esp_err_t b2_mqtt_stop(void);
 esp_err_t b2_mqtt_get_status(b2_mqtt_status_t *status);
 esp_err_t b2_mqtt_publish_state(void);
+esp_err_t b2_mqtt_publish_event(const char *event_name);
 esp_err_t b2_mqtt_publish_home_assistant_discovery(void);
 
 #ifdef __cplusplus

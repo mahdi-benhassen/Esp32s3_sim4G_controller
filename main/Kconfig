@@ -1,0 +1,11 @@
+menu "B2 controller options"
+
+config B2_CELLULAR_PPP_ENABLED
+    bool "Enable native esp_modem SIM7600 PPP data mode"
+    default n
+    help
+        Enable the official Espressif esp_modem PPPoS data path. This mode
+        takes exclusive ownership of the modem UART and therefore replaces
+        the legacy AT/SMS/GNSS service at application startup.
+
+endmenu

@@ -21,6 +21,9 @@ esp_err_t b2_storage_get_card_name(char *buffer, size_t buffer_size);
 /** Write a text file below /sdcard, rejecting traversal and absolute paths. */
 esp_err_t b2_storage_write_text(const char *relative_path, const char *text);
 
+/** Append text to a file below /sdcard, creating it when absent. */
+esp_err_t b2_storage_append_text(const char *relative_path, const char *text);
+
 /** Read a text file below /sdcard into a caller-provided buffer. */
 esp_err_t b2_storage_read_text(const char *relative_path, char *buffer, size_t buffer_size);
 

@@ -1,6 +1,7 @@
 #include "b2_adc.h"
 
 #include "b2_config.h"
+#include "b2_settings.h"
 #include "driver/i2c.h"
 #include "esp_check.h"
 #include "esp_log.h"
@@ -64,6 +65,10 @@ esp_err_t b2_adc_read_voltage(uint8_t channel, float *volts)
     ESP_RETURN_ON_FALSE(volts != NULL, ESP_ERR_INVALID_ARG, TAG, "null voltage output");
     ESP_RETURN_ON_ERROR(b2_adc_read_raw(channel, &raw), TAG, "read voltage raw");
     *volts = ((float)raw * 4.096f / 32768.0f) * B2_VOLTAGE_INPUT_SCALE;
+    b2_settings_t settings = {0};
+    if (b2_settings_load(&settings) == ESP_OK && channel < B2_ANALOG_CALIBRATION_COUNT) {
+        *volts = (*volts * settings.analog_gain[channel]) + settings.analog_offset[channel];
+    }
     return ESP_OK;
 }
 

@@ -10,6 +10,7 @@ extern "C" {
 
 typedef struct {
     bool started;
+    bool tls;
     uint16_t port;
 } b2_http_status_t;
 
@@ -32,7 +33,7 @@ esp_err_t b2_http_get_status(b2_http_status_t *status);
  *   GET /api/v1/capabilities
  *   GET /api/v1/status
  *
- * The service intentionally does not expose relay write operations. It must
- * be treated as a LAN-only diagnostic interface until an authentication and
- * transport-security policy is configured for a production deployment.
+ * Read-only endpoints remain available on HTTP for commissioning. Relay write
+ * endpoints are exposed only when a Bearer token is configured and are intended
+ * for HTTPS operation with a certificate/key pair on the SD card.
  */

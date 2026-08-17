@@ -40,6 +40,21 @@ def main() -> int:
         "main/b2_oled.c",
         "main/b2_modem.c",
         "main/b2_console.c",
+        "main/b2_security.c",
+        "main/b2_runtime.c",
+        "main/b2_eventlog.c",
+        "main/b2_rules.c",
+        "main/b2_ota.c",
+        "main/b2_time.c",
+        "main/b2_cellular.c",
+        "main/include/b2_cellular.h",
+        "main/Kconfig",
+        "main/idf_component.yml",
+        "main/include/b2_time.h",
+        "main/b2_http.c",
+        "main/include/b2_security.h",
+        "main/include/b2_ota.h",
+        "test_host/hil_bringup.py",
     ]
     for relative in required:
         require_file(relative)
@@ -51,13 +66,15 @@ def main() -> int:
         fail("root CMakeLists.txt does not use the ESP-IDF project build")
 
     main_cmake = require_file("main/CMakeLists.txt").read_text(encoding="utf-8")
-    for source in ("app_main.c", "b2_modem.c", "b2_relay.c", "b2_adc.c"):
+    for source in ("app_main.c", "b2_modem.c", "b2_relay.c", "b2_adc.c", "b2_security.c", "b2_rules.c", "b2_eventlog.c", "b2_ota.c", "b2_time.c", "b2_cellular.c", "esp_https_ota", "esp_https_server", "esp_modem"):
         if source not in main_cmake:
             fail(f"main/CMakeLists.txt does not register {source}")
 
     sdkconfig = require_file("sdkconfig.defaults").read_text(encoding="utf-8")
     if not re.search(r'CONFIG_IDF_TARGET\s*=\s*"esp32s3"', sdkconfig):
         fail("sdkconfig.defaults does not select ESP32-S3")
+    if "CONFIG_B2_CELLULAR_PPP_ENABLED=n" not in sdkconfig:
+        fail("cellular PPP must remain explicitly opt-in by default")
 
     partition_rows = []
     with require_file("partitions.csv").open(newline="", encoding="utf-8") as handle:
@@ -65,7 +82,7 @@ def main() -> int:
             if row and row[0].strip():
                 partition_rows.append([column.strip() for column in row])
     names = {row[0] for row in partition_rows}
-    if not {"nvs", "otadata", "ota_0", "ota_1", "storage"}.issubset(names):
+    if not {"nvs", "nvs_keys", "otadata", "ota_0", "ota_1", "storage"}.issubset(names):
         fail(f"partition table is missing required entries: {sorted(names)}")
     if any("ot a_" in name for name in names):
         fail("partition table contains a malformed OTA label")
