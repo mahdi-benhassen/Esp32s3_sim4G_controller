@@ -1,0 +1,26 @@
+idf_component_register(
+    SRCS
+        "app_main.c"
+        "b2_config.c"
+        "b2_board.c"
+        "b2_relay.c"
+        "b2_inputs.c"
+        "b2_adc.c"
+        "b2_rtc.c"
+        "b2_oled.c"
+        "b2_modem.c"
+        "b2_console.c"
+    INCLUDE_DIRS
+        "."
+        "include"
+    REQUIRES
+        driver
+        esp_event
+        esp_netif
+        esp_eth
+        esp_wifi
+        nvs_flash
+        esp_timer
+        freertos
+        log
+)
