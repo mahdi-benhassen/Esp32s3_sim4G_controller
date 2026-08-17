@@ -96,6 +96,15 @@ First validate the board with field wiring disconnected and a current-limited 12
 
 The local monitor accepts commands such as `relay 1 on`, `relay 2 toggle`, `input`, `adc 1`, and `modem`. Use these commands to verify each subsystem before adding a network protocol.
 
+## Documentation
+
+The repository includes two operational documents:
+
+| Document | Audience | Purpose |
+|---|---|---|
+| [`docs/system-architecture.md`](docs/system-architecture.md) | Developers, hardware engineers, integrators | Explains the system context, software layers, task model, data flows, board profile, diagnostics, CI/CD, and production hardening boundaries. |
+| [`docs/user-manual.md`](docs/user-manual.md) | Installers, technicians, and operators | Provides hardware preparation, ESP-IDF installation, flashing, commissioning, console commands, SMS control, updating, and troubleshooting instructions. |
+
 ## Repository structure
 
 ```text
@@ -109,6 +118,9 @@ The local monitor accepts commands such as `relay 1 on`, `relay 2 toggle`, `inpu
 │   ├── b2_*.c
 │   └── include/b2_*.h
 ├── docs/
+│   ├── hardware-integration.md
+│   ├── system-architecture.md
+│   └── user-manual.md
 └── test_host/
 ```
 
