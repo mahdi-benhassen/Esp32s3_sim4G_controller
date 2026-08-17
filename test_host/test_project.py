@@ -49,9 +49,19 @@ def main() -> int:
         "main/b2_cellular.c",
         "main/b2_ethernet.c",
         "main/b2_i2c_expander.c",
+        "main/b2_core.c",
+        "main/b2_tls_credentials.c",
+        "main/b2_ble.c",
         "main/include/b2_cellular.h",
         "main/include/b2_ethernet.h",
         "main/include/b2_i2c_expander.h",
+        "main/include/b2_core.h",
+        "main/include/b2_tls_credentials.h",
+        "main/include/b2_ble.h",
+        "sdkconfig.production-secure.defaults",
+        "docs/production-security.md",
+        "test_host/test_behavior.c",
+        "test_host/run_behavior_tests.sh",
         "main/Kconfig",
         "main/idf_component.yml",
         "main/include/b2_time.h",
@@ -70,7 +80,7 @@ def main() -> int:
         fail("root CMakeLists.txt does not use the ESP-IDF project build")
 
     main_cmake = require_file("main/CMakeLists.txt").read_text(encoding="utf-8")
-    for source in ("app_main.c", "b2_modem.c", "b2_relay.c", "b2_adc.c", "b2_security.c", "b2_rules.c", "b2_eventlog.c", "b2_ota.c", "b2_time.c", "b2_cellular.c", "b2_ethernet.c", "b2_i2c_expander.c", "esp_https_ota", "esp_https_server", "esp_modem"):
+    for source in ("app_main.c", "b2_modem.c", "b2_relay.c", "b2_adc.c", "b2_security.c", "b2_rules.c", "b2_eventlog.c", "b2_core.c", "b2_tls_credentials.c", "b2_ble.c", "b2_ota.c", "b2_time.c", "b2_cellular.c", "b2_ethernet.c", "b2_i2c_expander.c", "esp_https_ota", "esp_https_server", "esp_modem"):
         if source not in main_cmake:
             fail(f"main/CMakeLists.txt does not register {source}")
 
@@ -83,8 +93,14 @@ def main() -> int:
         fail("W5500 Ethernet must remain explicitly opt-in by default")
     if "CONFIG_B2_I2C_EXPANDER_ENABLED=n" not in sdkconfig:
         fail("PCA9548A expansion must remain explicitly opt-in by default")
+    if "CONFIG_B2_BLE_COMMISSIONING_ENABLED=n" not in sdkconfig:
+        fail("BLE commissioning must remain explicitly opt-in by default")
     if "CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=0" not in sdkconfig:
         fail("ESP32-S3 NVS HMAC eFuse key slot must be explicitly set to a valid slot")
+
+    secure_defaults = require_file("sdkconfig.production-secure.defaults").read_text(encoding="utf-8")
+    if "CONFIG_SECURE_BOOT_V2_ENABLED=y" not in secure_defaults or "CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y" not in secure_defaults:
+        fail("production security profile must explicitly enable Secure Boot v2 and release flash encryption")
 
     partition_rows = []
     with require_file("partitions.csv").open(newline="", encoding="utf-8") as handle:

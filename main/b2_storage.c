@@ -133,6 +133,17 @@ esp_err_t b2_storage_read_text(const char *relative_path, char *buffer, size_t b
     return ESP_OK;
 }
 
+esp_err_t b2_storage_delete_text(const char *relative_path)
+{
+    ESP_RETURN_ON_FALSE(s_mounted, ESP_ERR_INVALID_STATE, TAG, "SD card is not mounted");
+    char path[128] = {0};
+    ESP_RETURN_ON_ERROR(make_path(relative_path, path, sizeof(path)), TAG, "make storage path");
+    if (remove(path) != 0) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    return ESP_OK;
+}
+
 esp_err_t b2_storage_unmount(void)
 {
     if (!s_mounted) {

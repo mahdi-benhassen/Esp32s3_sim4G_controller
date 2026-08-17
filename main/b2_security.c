@@ -1,5 +1,6 @@
 #include "b2_security.h"
 
+#include "b2_core.h"
 #include "esp_check.h"
 #include "esp_partition.h"
 #include "esp_timer.h"
@@ -50,19 +51,7 @@ esp_err_t b2_security_init_nvs(void)
 
 bool b2_security_token_equal(const char *actual, const char *expected)
 {
-    if (actual == NULL || expected == NULL) {
-        return false;
-    }
-    const size_t actual_len = strlen(actual);
-    const size_t expected_len = strlen(expected);
-    size_t max_len = actual_len > expected_len ? actual_len : expected_len;
-    unsigned diff = (unsigned)(actual_len ^ expected_len);
-    for (size_t i = 0; i < max_len; ++i) {
-        const unsigned char a = i < actual_len ? (unsigned char)actual[i] : 0;
-        const unsigned char b = i < expected_len ? (unsigned char)expected[i] : 0;
-        diff |= (unsigned)(a ^ b);
-    }
-    return diff == 0;
+    return b2_core_token_equal(actual, expected);
 }
 
 static int find_slot(const char *sender)
@@ -120,23 +109,17 @@ bool b2_security_sms_accept(const b2_settings_t *settings, const char *sender, c
 esp_err_t b2_security_sms_command(const b2_settings_t *settings, const char *message,
                                   char *command, size_t command_size)
 {
-    ESP_RETURN_ON_FALSE(settings != NULL && message != NULL && command != NULL && command_size > 1,
-                        ESP_ERR_INVALID_ARG, TAG, "invalid SMS command arguments");
-    const char *body = message;
-    if (settings->sms_shared_secret[0] != '\0') {
-        const char prefix[] = "TOKEN:";
-        const size_t prefix_len = sizeof(prefix) - 1U;
-        ESP_RETURN_ON_FALSE(strncmp(body, prefix, prefix_len) == 0, ESP_ERR_INVALID_CRC, TAG, "SMS token missing");
-        const char *separator = strchr(body + prefix_len, ' ');
-        ESP_RETURN_ON_FALSE(separator != NULL, ESP_ERR_INVALID_CRC, TAG, "SMS token separator missing");
-        char token[B2_SETTINGS_SMS_SECRET_MAX] = {0};
-        size_t token_len = (size_t)(separator - (body + prefix_len));
-        ESP_RETURN_ON_FALSE(token_len > 0 && token_len < sizeof(token), ESP_ERR_INVALID_CRC, TAG, "SMS token size invalid");
-        memcpy(token, body + prefix_len, token_len);
-        ESP_RETURN_ON_FALSE(b2_security_token_equal(token, settings->sms_shared_secret), ESP_ERR_INVALID_CRC, TAG, "SMS token rejected");
-        body = separator + 1;
+    ESP_RETURN_ON_FALSE(settings != NULL, ESP_ERR_INVALID_ARG, TAG, "null settings");
+    const int result = b2_core_extract_sms_command(settings->sms_shared_secret, message, command, command_size);
+    if (result == -1) {
+        return ESP_ERR_INVALID_ARG;
     }
-    ESP_RETURN_ON_FALSE(strlcpy(command, body, command_size) < command_size, ESP_ERR_INVALID_SIZE, TAG, "SMS command too long");
+    if (result == -2) {
+        return ESP_ERR_INVALID_CRC;
+    }
+    if (result == -3) {
+        return ESP_ERR_INVALID_SIZE;
+    }
     return ESP_OK;
 }
 

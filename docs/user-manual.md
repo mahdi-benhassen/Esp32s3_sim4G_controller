@@ -311,3 +311,55 @@ Before removing the USB cable or modem supply, switch relays to the safe state a
 [4]: ../main/app_main.c "Application initialization and SMS command handling"
 
 [5]: https://docs.espressif.com/projects/esp-idf/en/v5.3.2/esp32s3/get-started/index.html "Espressif ESP-IDF ESP32-S3 getting started"
+
+
+## 16. Production security and credential lifecycle
+
+For development and bench bring-up, use the tracked `sdkconfig.defaults` profile. It keeps Secure Boot, release flash encryption, and BLE commissioning disabled by default. For a production image, copy `sdkconfig.production-secure.defaults` into the project configuration only after reviewing `docs/production-security.md`, generating a signing key outside the repository, and confirming the exact ESP32-S3 module and flash part.
+
+Never commit the Secure Boot signing key, a device-specific flash-encryption key, a production `sdkconfig`, or a provisioning transcript. The production profile intentionally contains a key path placeholder; replace it with a controlled path on the release workstation. Secure Boot and release flash encryption involve irreversible eFuse operations. Perform them on a sacrificial board first, retain the boot log and eFuse summary as manufacturing evidence, and do not treat a successful software build as proof that the security state is correctly provisioned.
+
+HTTPS server credentials are stored in the encrypted NVS credential namespace. A legacy installation may import `server.crt` and `server.key` from the SD card once, only when the encrypted NVS provider is available and the PEM sizes pass validation. After a successful import, the firmware makes a best-effort deletion of those legacy files. If migration fails, HTTPS does not silently fall back to plaintext private-key storage; correct the storage/security provisioning issue and reboot. Physical access to an SD card remains a field security concern until the migration has been verified.
+
+## 17. Authenticated HTTP rule management
+
+When HTTPS is active and the configured bearer token is presented, the API exposes `GET /api/v1/rules`, `PUT /api/v1/rules/{index}`, and `DELETE /api/v1/rules/{index}`. The endpoints accept and return bounded JSON rule objects using the same condition/action values as the console. Every write is authenticated, validated against relay/input/analog bounds, persisted through the versioned settings path, and live-reloaded with edge latches reset. Invalid JSON, unknown fields, out-of-range indices, unsupported actions, and oversized payloads are rejected without changing the active rule set.
+
+The API does not replace physical commissioning or electrical acceptance. Test rule writes with relay loads disconnected, use a temporary rule slot, verify the response and event log, then delete or disable the test rule. Plain HTTP never exposes rule writes. Treat the bearer token as a secret and rotate it through a controlled encrypted-NVS provisioning procedure.
+
+## 18. BLE commissioning (optional)
+
+BLE commissioning is an opt-in build feature. Enable `CONFIG_B2_BLE_COMMISSIONING_ENABLED` only for a controlled commissioning image after verifying that the target ESP32-S3 module includes the required Bluetooth capability. The tracked default remains disabled. The service uses the native NimBLE stack, requires an encrypted/authenticated link, and requires a local physical-presence event from the configuration button before accepting provisioning data. Unencrypted or unauthenticated GATT writes are rejected.
+
+The commissioning characteristic accepts a bounded JSON object for supported Wi-Fi, APN, MQTT, and HTTP-auth settings. It uses the existing settings validator and encrypted NVS save path; it does not accept arbitrary NVS keys, TLS private keys, Secure Boot material, or relay commands. Reboot after a successful provisioning response, verify `wifi`, `mqtt`, `http`, and `time`, then disable BLE in the production build unless a documented service workflow requires it. Verify that a client without an encrypted link and a client without the physical-presence gate both receive a rejection.
+
+## 19. HIL acceptance and release gate
+
+Run the staged serial acceptance script from a technician workstation after flashing a board with relay loads disconnected:
+
+```bash
+python3 -m pip install pyserial
+python3 test_host/hil_bringup.py --port /dev/ttyACM0 --json-report hil-report.json
+```
+
+The default run is read-only. Only after the board passes the read-only checks should a technician run the explicit persisted-setting checks:
+
+```bash
+python3 test_host/hil_bringup.py --port /dev/ttyACM0 --write-tests --json-report hil-write-report.json
+```
+
+The script reports physical gates that it cannot prove: relay contact life under the intended load, EMC/ESD/surge acceptance, antenna and GNSS validation for the installed SIM7600 variant, Secure Boot/flash-encryption provisioning, and BLE client security behavior. These gates require signed bench evidence and are mandatory before field deployment.
+
+A release candidate must pass the host validators, Unity behavior tests, cppcheck, clang-tidy, default ESP-IDF build, and the documented opt-in compile matrix. Only after those gates and the hardware acceptance record are complete should the repository be tagged `v1.0.0`.
+
+## 20. Troubleshooting production failures
+
+If HTTPS refuses to start after migration, inspect the encrypted-NVS initialization and PEM validation messages before reinserting legacy SD files. If BLE is visible but provisioning is rejected, confirm the physical configuration-button window and encrypted pairing state; do not weaken the security gate to make commissioning convenient. If a forced reboot occurs, the event logger flushes pending entries before the reboot request is accepted, but power loss can still defeat any software flush. For brownout, EMC, antenna, or relay failures, stop firmware debugging and return to the hardware-integration checklist and board schematic.
+
+## References
+
+[1] [KinCony B2 product documentation](https://www.kincony.com/)
+[2] [ESP-IDF documentation](https://docs.espressif.com/projects/esp-idf/en/v5.3.2/esp32s3/)
+[3] [ESP32-S3 technical reference and datasheet](https://www.espressif.com/en/products/socs/esp32-s3)
+[4] [SIMCom SIM7600 documentation](https://www.simcom.com/product/SIM7600CE-T.html)
+[5] [ESP-IDF security features](https://docs.espressif.com/projects/esp-idf/en/v5.3.2/esp32s3/security/security-features.html)

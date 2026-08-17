@@ -29,11 +29,15 @@ def main() -> int:
     ci_events = ci["on"]
     if not all(event in ci_events for event in ("push", "pull_request", "workflow_dispatch")):
         fail("ci.yml must trigger on push, pull_request, and workflow_dispatch")
-    for job_name in ("host-validation", "firmware-build"):
+    for job_name in ("host-validation", "behavior-tests", "static-analysis", "firmware-build"):
         if job_name not in ci["jobs"]:
             fail(f"ci.yml missing job: {job_name}")
     if "needs" not in ci["jobs"]["firmware-build"]:
         fail("firmware-build must depend on host-validation")
+    firmware_needs = ci["jobs"]["firmware-build"]["needs"]
+    for prerequisite in ("host-validation", "behavior-tests", "static-analysis"):
+        if prerequisite not in firmware_needs:
+            fail(f"firmware-build must depend on {prerequisite}")
 
     release_events = release["on"]
     if "push" not in release_events or "tags" not in release_events["push"]:

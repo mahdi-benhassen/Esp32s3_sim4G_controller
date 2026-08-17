@@ -28,3 +28,6 @@ CONFIG_B2_CELLULAR_PPP_ENABLED=n
 # Optional network-parity adapters remain disabled until the carrier pinout is verified.
 CONFIG_B2_ETHERNET_ENABLED=n
 CONFIG_B2_I2C_EXPANDER_ENABLED=n
+
+# BLE commissioning is disabled by default; enable only in a reviewed provisioning image.
+CONFIG_B2_BLE_COMMISSIONING_ENABLED=n

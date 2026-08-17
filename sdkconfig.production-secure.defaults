@@ -1,0 +1,12 @@
+# Production-only profile. Do not merge into sdkconfig.defaults.
+# Secure Boot and release flash encryption are irreversible on the target device;
+# review docs/production-security.md and perform a board-specific provisioning run.
+CONFIG_SECURE_BOOT_V2_ENABLED=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+CONFIG_SECURE_BOOT_SIGNING_KEY="keys/secure_boot_signing_key.pem"
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
+CONFIG_SECURE_FLASH_ENCRYPTION_AES128=y
+CONFIG_SECURE_FLASH_UART_BOOTLOADER_ALLOW_ENC=n
+CONFIG_SECURE_FLASH_UART_BOOTLOADER_ALLOW_DEC=n
+CONFIG_SECURE_BOOTLOADER_REFLASHABLE=y

@@ -1,5 +1,6 @@
 #include "b2_settings.h"
 
+#include "b2_core.h"
 #include "esp_check.h"
 #include "nvs.h"
 #include <math.h>
@@ -274,7 +275,8 @@ esp_err_t b2_settings_load(b2_settings_t *settings)
     b2_settings_v3_t old_v3 = {0};
     size_t old_v3_length = sizeof(old_v3);
     esp_err_t old_v3_err = nvs_get_blob(handle, NVS_KEY, &old_v3, &old_v3_length);
-    if (old_v3_err == ESP_OK && old_v3_length == sizeof(old_v3) && old_v3.version == 3) {
+    if (old_v3_err == ESP_OK && old_v3_length == sizeof(old_v3) && old_v3.version == 3 &&
+        b2_core_settings_version_supported(old_v3.version, SETTINGS_VERSION)) {
         nvs_close(handle);
         migrate_v3(&old_v3, settings);
         return b2_settings_save(settings);
@@ -283,7 +285,8 @@ esp_err_t b2_settings_load(b2_settings_t *settings)
     b2_settings_v2_t old_v2 = {0};
     size_t old_v2_length = sizeof(old_v2);
     esp_err_t old_v2_err = nvs_get_blob(handle, NVS_KEY, &old_v2, &old_v2_length);
-    if (old_v2_err == ESP_OK && old_v2_length == sizeof(old_v2) && old_v2.version == 2) {
+    if (old_v2_err == ESP_OK && old_v2_length == sizeof(old_v2) && old_v2.version == 2 &&
+        b2_core_settings_version_supported(old_v2.version, SETTINGS_VERSION)) {
         nvs_close(handle);
         migrate_v2(&old_v2, settings);
         return b2_settings_save(settings);
@@ -293,7 +296,8 @@ esp_err_t b2_settings_load(b2_settings_t *settings)
     size_t old_length = sizeof(old);
     esp_err_t old_err = nvs_get_blob(handle, NVS_KEY, &old, &old_length);
     nvs_close(handle);
-    if (old_err == ESP_OK && old_length == sizeof(old) && old.version == 1) {
+    if (old_err == ESP_OK && old_length == sizeof(old) && old.version == 1 &&
+        b2_core_settings_version_supported(old.version, SETTINGS_VERSION)) {
         migrate_v1(&old, settings);
         return b2_settings_save(settings);
     }

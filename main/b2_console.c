@@ -157,6 +157,7 @@ static void console_task(void *arg)
             b2_settings_t settings = {0};
             esp_err_t err = b2_settings_load(&settings);
             if (err == ESP_OK) {
+                printf("RULES count=%u\n", settings.rule_count);
                 for (uint8_t i = 0; i < settings.rule_count && i < B2_SETTINGS_RULE_COUNT; ++i) {
                     printf("RULE%u enabled=%s condition=%u source=%u action=%u target=%u duration_ms=%" PRIu32 " threshold=%.3f\n",
                            (unsigned)(i + 1U), settings.rules[i].enabled ? "yes" : "no", settings.rules[i].condition,

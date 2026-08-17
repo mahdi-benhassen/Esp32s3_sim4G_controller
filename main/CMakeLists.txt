@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "app_main.c"
         "b2_config.c"
+        "b2_core.c"
         "b2_board.c"
         "b2_relay.c"
         "b2_inputs.c"
@@ -22,6 +23,8 @@ idf_component_register(
         "b2_wifi.c"
         "b2_mqtt.c"
         "b2_http.c"
+        "b2_tls_credentials.c"
+        "b2_ble.c"
         "b2_ota.c"
         "b2_time.c"
         "b2_cellular.c"
@@ -32,6 +35,7 @@ idf_component_register(
         "include"
     REQUIRES
         driver
+        bt
         esp_event
         esp_netif
         esp_eth
@@ -48,4 +52,5 @@ idf_component_register(
         esp_timer
         freertos
         log
+        json
 )

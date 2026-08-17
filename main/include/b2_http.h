@@ -14,7 +14,7 @@ typedef struct {
     uint16_t port;
 } b2_http_status_t;
 
-/** Start the read-only HTTP diagnostics service. */
+/** Start the HTTPS diagnostics and authenticated control service. */
 esp_err_t b2_http_start(void);
 
 /** Stop the HTTP diagnostics service. */
@@ -28,12 +28,19 @@ esp_err_t b2_http_get_status(b2_http_status_t *status);
 #endif
 
 /**
- * Endpoints exposed by the open diagnostics service:
+ * Public diagnostics endpoints:
  *   GET /health
  *   GET /api/v1/capabilities
  *   GET /api/v1/status
  *
- * Read-only endpoints remain available on HTTP for commissioning. Relay write
- * endpoints are exposed only when a Bearer token is configured and are intended
- * for HTTPS operation with a certificate/key pair on the SD card.
+ * When TLS credentials and a Bearer token are available, authenticated endpoints
+ * expose relay control, event export, self-test, reboot, and rule CRUD:
+ *   GET /api/v1/rules
+ *   GET /api/v1/rules/{1..8}
+ *   PUT /api/v1/rules/{1..8}
+ *   DELETE /api/v1/rules/{1..8}
+ *
+ * Rule writes are validated, persisted to encrypted NVS, and live-reloaded. A
+ * reboot request flushes the deferred event log before restarting. Plain HTTP
+ * never exposes state-changing endpoints.
  */

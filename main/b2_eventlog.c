@@ -1,5 +1,6 @@
 #include "b2_eventlog.h"
 
+#include "b2_core.h"
 #include "b2_storage.h"
 #include "esp_check.h"
 #include "esp_log.h"
@@ -17,11 +18,7 @@ static const char *NVS_KEY = "ring";
 static const uint32_t FLUSH_DIRTY_THRESHOLD = 4U;
 static const int64_t FLUSH_INTERVAL_US = 10LL * 1000LL * 1000LL;
 
-typedef struct {
-    uint32_t next;
-    uint32_t count;
-    b2_event_t entries[B2_EVENT_LOG_CAPACITY];
-} event_ring_t;
+typedef b2_core_event_ring_t event_ring_t;
 
 static event_ring_t s_ring;
 static SemaphoreHandle_t s_lock;
@@ -108,20 +105,16 @@ esp_err_t b2_event_log_append(b2_event_type_t type, uint8_t source, int32_t valu
     if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
-    b2_event_t *event = &s_ring.entries[s_ring.next];
-    memset(event, 0, sizeof(*event));
-    event->sequence = s_ring.count > 0 ? s_ring.entries[(s_ring.next + B2_EVENT_LOG_CAPACITY - 1U) % B2_EVENT_LOG_CAPACITY].sequence + 1U : 1U;
-    event->timestamp_us = esp_timer_get_time();
-    event->type = (uint8_t)type;
-    event->source = source;
-    event->value = value;
-    if (text != NULL) {
-        snprintf(event->text, sizeof(event->text), "%s", text);
+    uint32_t sequence = 0;
+    const int64_t timestamp_us = esp_timer_get_time();
+    esp_err_t err = b2_core_event_ring_append(&s_ring, timestamp_us, (uint8_t)type, source,
+                                               value, text, &sequence);
+    if (err != ESP_OK) {
+        xSemaphoreGive(s_lock);
+        return err;
     }
-    s_ring.next = (s_ring.next + 1U) % B2_EVENT_LOG_CAPACITY;
-    if (s_ring.count < B2_EVENT_LOG_CAPACITY) {
-        s_ring.count++;
-    }
+    const uint32_t newest = (s_ring.next + B2_EVENT_LOG_CAPACITY - 1U) % B2_EVENT_LOG_CAPACITY;
+    b2_event_t *event = &s_ring.entries[newest];
     s_dirty_count++;
     s_last_append_us = event->timestamp_us;
 
@@ -164,11 +157,9 @@ esp_err_t b2_event_log_get_newest(uint8_t index, b2_event_t *event)
         xSemaphoreGive(s_lock);
         return ESP_ERR_NOT_FOUND;
     }
-    const uint32_t newest = (s_ring.next + B2_EVENT_LOG_CAPACITY - 1U) % B2_EVENT_LOG_CAPACITY;
-    const uint32_t position = (newest + B2_EVENT_LOG_CAPACITY - index) % B2_EVENT_LOG_CAPACITY;
-    *event = s_ring.entries[position];
+    esp_err_t err = b2_core_event_ring_get_newest(&s_ring, index, event);
     xSemaphoreGive(s_lock);
-    return ESP_OK;
+    return err;
 }
 
 uint32_t b2_event_log_count(void)

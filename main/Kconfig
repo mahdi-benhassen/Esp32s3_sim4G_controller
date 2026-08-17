@@ -17,6 +17,15 @@ config B2_ETHERNET_ENABLED
         profile must provide verified SPI and interrupt/reset pins; this
         option is disabled by default because the carrier PCB is unknown.
 
+config B2_BLE_COMMISSIONING_ENABLED
+    bool "Enable BLE commissioning"
+    default n
+    depends on BT_ENABLED && BT_NIMBLE_ENABLED
+    help
+        Enable the native NimBLE commissioning service. Commissioning is
+        accepted only while the physical CONFIG button is held and after the
+        BLE link is encrypted; credentials are persisted to encrypted NVS.
+
 config B2_I2C_EXPANDER_ENABLED
     bool "Enable optional PCA9548A I2C bus expander"
     default n

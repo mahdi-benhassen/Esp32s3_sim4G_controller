@@ -14,3 +14,9 @@ compile_commands.json
 # OS files
 .DS_Store
 Thumbs.db
+
+# Production signing material must remain outside version control
+keys/*.pem
+keys/*.key
+!keys/.gitkeep
+sdkconfig.production-secure

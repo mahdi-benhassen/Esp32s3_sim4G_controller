@@ -63,3 +63,20 @@ Next, loop RS485 TX/RX through the transceiver with the intended termination and
 ## Reference
 
 [1]: https://www.kincony.com/kincony-b2-smart-controller-released.html "KinCony B2 Smart Controller released"
+
+
+## Production security and field acceptance addendum
+
+The encrypted NVS credential path reduces exposure of HTTPS private keys, but it does not eliminate physical-access risk. Before production release, verify that legacy SD-card `server.key` and `server.crt` files were imported successfully into encrypted NVS and removed. Do not ship a board with private TLS material left on removable media. Treat an SD card from a returned field device as sensitive material until it has been securely erased or physically destroyed under the service policy.
+
+Secure Boot v2 and release flash encryption are manufacturing controls, not ordinary runtime features. Use the reviewed `sdkconfig.production-secure.defaults` profile only with a board-specific signing-key custody procedure. Record the chip identity, bootloader/application hashes, eFuse summary, flash-encryption state, and recovery policy. Validate the exact module and flash configuration before irreversible provisioning; a build artifact alone is not evidence of a correctly locked device.
+
+## HIL evidence package
+
+Attach the JSON report from `test_host/hil_bringup.py`, serial boot log, flashed image hash, board profile revision, power measurements, modem/GNSS results, and the signed physical-gate checklist to the release record. A green CI build plus a serial smoke test is a software gate, not a product certification.
+
+The HIL script reports, but cannot prove, relay contact life under the intended load, EMC/ESD/surge acceptance, antenna and GNSS validation for the installed SIM7600 variant, Secure Boot/flash-encryption provisioning, and BLE client security behavior. These gates require signed bench evidence and are mandatory before field deployment.
+
+## Relay and field-load acceptance
+
+Test relay contact life, inrush, inductive suppression, thermal rise, contact welding behavior, and failure-to-safe behavior with the actual load class and enclosure. Firmware interlock and fail-safe-off are defensive controls; they do not establish contact ratings, arc suppression, fuse coordination, creepage, clearance, or compliance. Keep mains and hazardous loads disconnected until a qualified reviewer signs the electrical acceptance record.

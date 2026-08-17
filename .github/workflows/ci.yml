@@ -48,10 +48,61 @@ jobs:
       - name: Check repository whitespace
         run: git diff --check
 
+  behavior-tests:
+    name: Host behavior tests
+    runs-on: ubuntu-22.04
+    needs: host-validation
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install ESP-IDF host headers
+        run: |
+          git clone --depth 1 --branch ${{ env.ESP_IDF_VERSION }} https://github.com/espressif/esp-idf.git "$RUNNER_TEMP/esp-idf"
+
+      - name: Run Unity behavior tests
+        env:
+          IDF_PATH: ${{ runner.temp }}/esp-idf
+        run: |
+          mkdir -p build/config
+          printf '#pragma once\n' > build/config/sdkconfig.h
+          test_host/run_behavior_tests.sh
+
+  static-analysis:
+    name: Static analysis
+    runs-on: ubuntu-22.04
+    needs: host-validation
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install analyzers and ESP-IDF headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck clang-tidy
+          git clone --depth 1 --branch ${{ env.ESP_IDF_VERSION }} https://github.com/espressif/esp-idf.git "$RUNNER_TEMP/esp-idf"
+
+      - name: Run cppcheck
+        run: >-
+          cppcheck --enable=warning,style,performance,portability
+          --error-exitcode=1 --suppress=missingIncludeSystem
+          --language=c --std=c11
+          main/b2_core.c test_host/test_behavior.c
+
+      - name: Run clang-tidy
+        run: >-
+          clang-tidy main/b2_core.c test_host/test_behavior.c
+          --checks='-*,bugprone-argument-comment,bugprone-bool-pointer-implicit-conversion,bugprone-dangling-handle,bugprone-integer-division,bugprone-macro-parentheses,bugprone-misplaced-widening-cast,bugprone-sizeof-expression,bugprone-suspicious-memset-usage,performance-*,clang-analyzer-*,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling'
+          --warnings-as-errors='*'
+          -- -std=c11 -D_GNU_SOURCE
+          -Ibuild/config -Imain/include
+          -I${{ runner.temp }}/esp-idf/components/unity/unity/src
+          -I${{ runner.temp }}/esp-idf/components/esp_common/include
+
   firmware-build:
     name: ESP-IDF firmware build
     runs-on: ubuntu-22.04
-    needs: host-validation
+    needs: [host-validation, behavior-tests, static-analysis]
     steps:
       - name: Check out source
         uses: actions/checkout@v4

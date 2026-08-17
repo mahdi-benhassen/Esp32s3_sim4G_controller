@@ -1,5 +1,6 @@
 #include "b2_adc.h"
 #include "b2_board.h"
+#include "b2_ble.h"
 #include "b2_buttons.h"
 #include "b2_cellular.h"
 #include "b2_ethernet.h"
@@ -193,6 +194,11 @@ void app_main(void)
     if (b2_buttons_start(button_event, NULL) != ESP_OK) {
         ESP_LOGW(TAG, "continuing without physical-button service");
     }
+#if CONFIG_B2_BLE_COMMISSIONING_ENABLED
+    if (b2_ble_start() != ESP_OK) {
+        ESP_LOGI(TAG, "BLE commissioning not started; hold CONFIG button during boot");
+    }
+#endif
     if (b2_modbus_init() != ESP_OK) {
         ESP_LOGW(TAG, "continuing without Modbus RTU service");
     }

@@ -27,6 +27,9 @@ esp_err_t b2_storage_append_text(const char *relative_path, const char *text);
 /** Read a text file below /sdcard into a caller-provided buffer. */
 esp_err_t b2_storage_read_text(const char *relative_path, char *buffer, size_t buffer_size);
 
+/** Delete a file below /sdcard after validating its relative path. */
+esp_err_t b2_storage_delete_text(const char *relative_path);
+
 /** Unmount the card and release the SPI device. */
 esp_err_t b2_storage_unmount(void);
 
