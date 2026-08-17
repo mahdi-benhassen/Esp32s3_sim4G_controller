@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ESP_IDF_VERSION: v5.3.2
+  ESP_TARGET: esp32s3
+
+jobs:
+  host-validation:
+    name: Host validation
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install validation dependencies
+        run: python -m pip install --disable-pip-version-check pyyaml
+
+      - name: Compile host validation scripts
+        run: python -m py_compile test_host/test_project.py test_host/validate_workflows.py
+
+      - name: Run project validation
+        run: python test_host/test_project.py
+
+      - name: Validate workflow structure
+        run: python test_host/validate_workflows.py
+
+      - name: Check repository whitespace
+        run: git diff --check
+
+  firmware-build:
+    name: ESP-IDF firmware build
+    runs-on: ubuntu-22.04
+    needs: host-validation
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: ${{ env.ESP_IDF_VERSION }}
+          target: ${{ env.ESP_TARGET }}
+          command: 'idf.py build'
+
+      - name: Package firmware outputs
+        run: |
+          mkdir -p artifacts
+          cp build/kincony_b2_esp32s3.bin artifacts/
+          cp build/bootloader/bootloader.bin artifacts/
+          cp build/partition_table/partition-table.bin artifacts/
+          cp build/ota_data_initial.bin artifacts/
+          cp partitions.csv artifacts/
+          sha256sum artifacts/* | tee artifacts/SHA256SUMS
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kincony-b2-esp32s3-firmware-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build directory on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp-idf-build-failure-${{ github.run_id }}
+          path: build/log/
+          if-no-files-found: ignore
+          retention-days: 7

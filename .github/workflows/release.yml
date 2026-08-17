@@ -1,0 +1,92 @@
+name: Release firmware
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag to release, for example v1.2.3'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  ESP_IDF_VERSION: v5.3.2
+  ESP_TARGET: esp32s3
+
+jobs:
+  validate-tag:
+    name: Validate version tag
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Verify tag format
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a semantic version tag such as v1.2.3, got: $RELEASE_TAG"
+            exit 1
+          fi
+
+      - name: Run host validation
+        run: python3 test_host/test_project.py
+
+  build-release:
+    name: Build release firmware
+    runs-on: ubuntu-22.04
+    needs: validate-tag
+    steps:
+      - name: Check out exact release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Build firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: ${{ env.ESP_IDF_VERSION }}
+          target: ${{ env.ESP_TARGET }}
+          command: 'idf.py build'
+
+      - name: Prepare release package
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p release/${RELEASE_TAG}
+          cp build/kincony_b2_esp32s3.bin release/${RELEASE_TAG}/
+          cp build/bootloader/bootloader.bin release/${RELEASE_TAG}/
+          cp build/partition_table/partition-table.bin release/${RELEASE_TAG}/
+          cp build/ota_data_initial.bin release/${RELEASE_TAG}/
+          cp partitions.csv release/${RELEASE_TAG}/
+          cp README.md release/${RELEASE_TAG}/
+          sha256sum release/${RELEASE_TAG}/* > release/${RELEASE_TAG}/SHA256SUMS
+          tar -C release -czf kincony-b2-esp32s3-${RELEASE_TAG}.tar.gz ${RELEASE_TAG}
+          sha256sum kincony-b2-esp32s3-${RELEASE_TAG}.tar.gz > kincony-b2-esp32s3-${RELEASE_TAG}.tar.gz.sha256
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            "kincony-b2-esp32s3-${RELEASE_TAG}.tar.gz" \
+            "kincony-b2-esp32s3-${RELEASE_TAG}.tar.gz.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "KinCony B2-compatible ESP32-S3 firmware ${RELEASE_TAG}" \
+            --generate-notes

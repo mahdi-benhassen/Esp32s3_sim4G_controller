@@ -71,6 +71,25 @@ idf.py -p /dev/ttyACM0 flash monitor
 
 The project defaults target an 8 MB ESP32-S3 flash device and use two OTA application slots. If the module or carrier has a different flash size, adjust `sdkconfig.defaults` and regenerate the project configuration before flashing.
 
+## CI/CD and releases
+
+GitHub Actions are defined under `.github/workflows/`. Every pull request, push to `main`, and manual dispatch runs host validation and a native ESP-IDF ESP32-S3 build. The host job checks the repository structure, ESP-IDF CMake metadata, target selection, partition table, native-library policy, Python syntax, and repository whitespace without requiring hardware. The firmware job compiles the application using ESP-IDF `v5.3.2`, uploads the bootloader, partition table, OTA data, application binary, partition CSV, and SHA-256 checksums as a short-lived CI artifact.
+
+A semantic version tag matching `vMAJOR.MINOR.PATCH`, such as `v1.0.0`, starts the release workflow. It validates the exact tagged source, rebuilds the firmware from that tag, packages the flashable binaries and documentation into `kincony-b2-esp32s3-vMAJOR.MINOR.PATCH.tar.gz`, generates checksums, and creates a GitHub Release with generated notes. To publish a release locally after committing the desired version, use:
+
+```bash
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+```
+
+The same release workflow can be started manually from the GitHub Actions interface for an existing semantic-version tag. Run the fast local checks before opening a pull request:
+
+```bash
+python3 -m py_compile test_host/test_project.py
+python3 test_host/test_project.py
+git diff --check
+```
+
 ## Bring-up sequence
 
 First validate the board with field wiring disconnected and a current-limited 12–24 V DC supply whose downstream regulator produces the correct 3.3 V rail. Confirm that the relays start de-energized. Then validate I2C devices one at a time, followed by RS485 loopback, modem UART communication, SIM7600 registration, and finally dry-contact inputs. Do not connect mains wiring during firmware bring-up; relay contact ratings, creepage, clearance, fusing, enclosure, and installation requirements must be reviewed by a qualified electrical professional.
