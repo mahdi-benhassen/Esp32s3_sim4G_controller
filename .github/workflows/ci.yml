@@ -56,13 +56,15 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Install ESP-IDF host headers
+      - name: Install ESP-IDF host headers and Unity
         run: |
           git clone --depth 1 --branch ${{ env.ESP_IDF_VERSION }} https://github.com/espressif/esp-idf.git "$RUNNER_TEMP/esp-idf"
+          git clone --depth 1 https://github.com/ThrowTheSwitch/Unity.git "$RUNNER_TEMP/unity"
 
       - name: Run Unity behavior tests
         env:
           IDF_PATH: ${{ runner.temp }}/esp-idf
+          UNITY_PATH: ${{ runner.temp }}/unity
         run: |
           mkdir -p build/config
           printf '#pragma once\n' > build/config/sdkconfig.h
@@ -76,11 +78,14 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Install analyzers and ESP-IDF headers
+      - name: Install analyzers, ESP-IDF headers, and Unity
         run: |
           sudo apt-get update
           sudo apt-get install -y cppcheck clang-tidy
           git clone --depth 1 --branch ${{ env.ESP_IDF_VERSION }} https://github.com/espressif/esp-idf.git "$RUNNER_TEMP/esp-idf"
+          git clone --depth 1 https://github.com/ThrowTheSwitch/Unity.git "$RUNNER_TEMP/unity"
+          mkdir -p build/config
+          printf '#pragma once\n' > build/config/sdkconfig.h
 
       - name: Run cppcheck
         run: >-
@@ -96,7 +101,7 @@ jobs:
           --warnings-as-errors='*'
           -- -std=c11 -D_GNU_SOURCE
           -Ibuild/config -Imain/include
-          -I${{ runner.temp }}/esp-idf/components/unity/unity/src
+          -I${{ runner.temp }}/unity/src
           -I${{ runner.temp }}/esp-idf/components/esp_common/include
 
   firmware-build:
