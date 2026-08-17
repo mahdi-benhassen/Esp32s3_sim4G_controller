@@ -24,3 +24,7 @@ CONFIG_ESP_SYSTEM_BROWNOUT_INTR=y
 
 # Native esp_modem PPP is opt-in because it takes exclusive ownership of the SIM7600 UART.
 CONFIG_B2_CELLULAR_PPP_ENABLED=n
+
+# Optional network-parity adapters remain disabled until the carrier pinout is verified.
+CONFIG_B2_ETHERNET_ENABLED=n
+CONFIG_B2_I2C_EXPANDER_ENABLED=n

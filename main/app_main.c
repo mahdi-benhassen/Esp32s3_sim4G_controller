@@ -2,6 +2,8 @@
 #include "b2_board.h"
 #include "b2_buttons.h"
 #include "b2_cellular.h"
+#include "b2_ethernet.h"
+#include "b2_i2c_expander.h"
 #include "b2_config.h"
 #include "b2_console.h"
 #include "b2_eventlog.h"
@@ -215,6 +217,9 @@ void app_main(void)
     if (b2_adc_init() != ESP_OK) {
         ESP_LOGW(TAG, "continuing without ADS1115");
     }
+    if (b2_i2c_expander_init() != ESP_OK) {
+        ESP_LOGI(TAG, "I2C bus expander disabled or unavailable");
+    }
     if (b2_rtc_init() != ESP_OK) {
         ESP_LOGW(TAG, "continuing without DS3231");
     }
@@ -235,6 +240,9 @@ void app_main(void)
     }
     if (b2_http_start() != ESP_OK) {
         ESP_LOGW(TAG, "continuing without HTTP diagnostics");
+    }
+    if (b2_ethernet_start() != ESP_OK) {
+        ESP_LOGI(TAG, "Ethernet disabled or not provisioned");
     }
     if (b2_ota_confirm_running() != ESP_OK) {
         ESP_LOGE(TAG, "OTA image confirmation failed; bootloader rollback may occur");

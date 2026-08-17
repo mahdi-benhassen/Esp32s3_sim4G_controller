@@ -10,7 +10,7 @@ Do not assume that the example GPIO profile is correct for your board. The firmw
 
 ## 2. What the system provides
 
-After installation, the firmware provides two local relay outputs, two debounced dry-contact inputs, four ADS1115 analog channels with persisted calibration, four configurable 1-Wire/DS18B20 channels, SPI SD-card storage, three debounced physical-button inputs, RS485 UART with Modbus RTU master helpers, a DS3231 RTC interface, an SSD1306 OLED status view, a SIM7600 AT-command service with SMS, voice, APN/PDP, and hardware-gated GNSS controls, plus an opt-in native Espressif `esp_modem` SIM7600 PPP/IP data mode, versioned and optionally encrypted NVS settings, Wi-Fi station mode, a policy-controlled MQTT client with TLS and Home Assistant discovery, optional HTTPS diagnostics with bearer-authenticated relay writes, a local rule engine, structured event history, verified HTTPS OTA with rollback confirmation, and a serial bring-up console. The reference application still does not provide verified Ethernet/BLE carrier profiles or proprietary Tuya/KCS integration [4]; PPP/IP cellular data is available only through the explicit mutually exclusive build mode described in Section 9.
+After installation, the firmware provides two local relay outputs, two debounced dry-contact inputs, four ADS1115 analog channels with persisted calibration, four configurable 1-Wire/DS18B20 channels, SPI SD-card storage, three debounced physical-button inputs, RS485 UART with Modbus RTU master helpers, a DS3231 RTC interface, an SSD1306 OLED status view, a SIM7600 AT-command service with SMS, voice, APN/PDP, and hardware-gated GNSS controls, plus an opt-in native Espressif `esp_modem` SIM7600 PPP/IP data mode, versioned and optionally encrypted NVS settings, Wi-Fi station mode, a policy-controlled MQTT client with TLS and Home Assistant discovery, optional HTTPS diagnostics with bearer-authenticated relay writes, an optional native W5500 SPI Ethernet adapter, an optional PCA9548A I2C channel-select helper, a local rule engine, structured event history, verified HTTPS OTA with rollback confirmation, and a serial bring-up console. Ethernet and I2C expansion remain hardware-gated and disabled by default because the target carrier schematic is not verified; proprietary Tuya/KCS integration remains out of scope [4]. PPP/IP cellular data is available only through the explicit mutually exclusive build mode described in Section 9.
 
 | Function | User-visible behavior |
 |---|---|
@@ -25,6 +25,8 @@ After installation, the firmware provides two local relay outputs, two debounced
 | SD card | Optional SDSPI FAT mounting and safe application-path file access; verify SPI routing before insertion. |
 | Physical buttons | Debounced reset/download/configuration events; bootloader behavior remains controlled by the ESP32-S3 ROM and board design. |
 | Modbus RTU | Bounded RS485 master reads and writes with CRC16 validation; slave register maps remain application-specific. |
+| Ethernet | Optional native W5500 SPI adapter with ESP-NETIF glue; disabled by default and usable only after carrier pin validation. |
+| I2C expansion | Optional PCA9548A channel-select helper; callers must explicitly select and disable channels, and the target expander/address must be verified. |
 | Wi-Fi | Persisted station credentials, reconnect behavior, IP/RSSI status, and local provisioning commands. |
 | MQTT | Optional broker client with `mqtts://` certificate validation, explicit plaintext override, relay command topics, versioned JSON state/event telemetry, and retained Home Assistant discovery for relays and dry-contact sensors. |
 | HTTP diagnostics | Read-only `GET /health`, `/api/v1/capabilities`, and `/api/v1/status` endpoints; if `server.crt` and `server.key` are present on the SD card, the service uses HTTPS on port 443 and enables bearer-authenticated relay writes, event export, self-test, and reboot diagnostics. Plain HTTP fallback never exposes control endpoints. |
@@ -164,8 +166,10 @@ The console is available through the ESP-IDF monitor’s standard input. Command
 | `rule <index> disable` | Clears one persisted rule slot. | Reports saved state; reboot to apply. |
 | `rules` | Lists persisted local rules. | Reports condition, source, action, target, duration, and threshold. |
 | `http` | Reports HTTP/HTTPS service state and endpoint policy. | Reports TLS state, port, and whether control endpoints are enabled. |
-| `time` | Reports SNTP/RTC synchronization state and timezone. | Reports `TIME started=yes synchronized=yes TZ=...`. |
-| `events` | Reports event count and latest event. | Use authenticated HTTPS `/api/v1/events` for a bounded JSON export. |
+| `time` | Reports SNTP/RTC synchronization state, timezone, and configured server. | Reports `TIME started=yes synchronized=yes SERVER=pool.ntp.org TZ=...`. |
+| `time server <hostname>` | Persists a validated SNTP hostname and applies it on the next time-service start/reboot. | Example: `time server time.example.net`; reboot after provisioning. |
+| `events` | Reports event count and latest event. | New events are buffered and flushed to NVS after four events or approximately ten seconds; use authenticated HTTPS `/api/v1/events` for a bounded JSON export. |
+| Ethernet status | There is no dedicated runtime provisioning command; status is exposed through normal network/HTTP telemetry when the opt-in service is enabled. | Enable at build time only after board-profile validation and confirm the boot log reports the W5500 service start. |
 | `ota status` | Reports bootloader rollback-verification state. | Reports `pending_verification=yes|no`. |
 
 The console is a bring-up and provisioning interface, not an authenticated operator interface. Do not expose it to an untrusted network or connect the monitor to a shared production console without access control. Rule and calibration commands write NVS and explicitly require a reboot before the runtime service reloads them.
@@ -197,9 +201,27 @@ Wi-Fi and MQTT are independent of the SIM7600 SMS path. Configure Wi-Fi first, t
 
 Broker credentials and the CA certificate are stored in the versioned settings model; enable encrypted NVS provisioning for production. Use an `mqtts://` URI and configure the CA certificate through the supported settings path. Plain `mqtt://` is rejected unless the operator explicitly enables the plaintext override. State JSON includes schema version, relays, inputs, DS18B20 temperatures, modem registration/CSQ, Wi-Fi connectivity/RSSI, and event count. Retained Home Assistant discovery remains available for relays and dry-contact inputs. Do not expose the console or plaintext HTTP fallback to an untrusted network.
 
-### 9.2 HTTP/HTTPS diagnostics
+### 9.2 Optional Ethernet and I2C expansion
 
-When the HTTP service is running, use the controller’s Wi-Fi address from another device on the same trusted LAN:
+The default build keeps both network-parity adapters disabled. Do not enable them merely because the commercial B2 announcement lists Ethernet or I2C expansion; first verify the actual carrier schematic and populate the corresponding board-profile fields in `main/b2_config.c`.
+
+For W5500 Ethernet, set the verified SPI host, MOSI, MISO, SCLK, CS, interrupt, and reset pins in the board profile. Enable the ESP-IDF W5500 symbols and `CONFIG_B2_ETHERNET_ENABLED=y` through a release-specific configuration, then rebuild and inspect the boot log for `native W5500 Ethernet started`. A minimal opt-in sequence is:
+
+```bash
+idf.py menuconfig
+# Component config -> Ethernet -> SPI Ethernet -> W5500
+# B2 controller options -> Enable optional native W5500 Ethernet
+idf.py build
+idf.py flash monitor
+```
+
+Validate link negotiation, DHCP/static addressing, HTTPS, MQTT TLS, link-loss recovery, SPI contention, and supply/thermal behavior before connecting the controller to a production LAN. The current adapter does not implement Ethernet/Wi-Fi/cellular priority failover or claim IPv6 validation.
+
+For a PCA9548A-compatible I2C expander, set `i2c_expander_address` in the board profile, enable `CONFIG_B2_I2C_EXPANDER_ENABLED=y`, rebuild, and ensure every downstream transaction calls the select/disable API around its transaction group. Initialization disables all channels. Do not place same-address devices on multiple selected channels without a verified access policy, and do not assume that existing ADS1115/RTC/OLED drivers automatically move behind the expander.
+
+### 9.3 HTTP/HTTPS diagnostics
+
+When the HTTP service is running, use the controller’s Wi-Fi or validated Ethernet address from another device on the same trusted LAN:
 
 ```bash
 curl http://CONTROLLER_IP/health
@@ -265,7 +287,7 @@ Use the exact command strings, confirm modem registration, inspect the serial lo
 
 ## 12. Hardware-in-the-loop acceptance and maintenance
 
-The repository includes `test_host/hil_bringup.py` for the final assembled-board smoke test. Install `pyserial` on the technician workstation, connect the USB serial port, and run:
+The repository includes `test_host/hil_bringup.py` for the final assembled-board smoke test. The event-log query is intentionally non-destructive; because event records are batched, a just-created event may not be visible in NVS until the threshold or timer flush occurs. Install `pyserial` on the technician workstation, connect the USB serial port, and run:
 
 ```bash
 python3 -m pip install pyserial

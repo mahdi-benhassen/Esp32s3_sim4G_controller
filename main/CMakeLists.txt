@@ -25,6 +25,8 @@ idf_component_register(
         "b2_ota.c"
         "b2_time.c"
         "b2_cellular.c"
+        "b2_ethernet.c"
+        "b2_i2c_expander.c"
     INCLUDE_DIRS
         "."
         "include"

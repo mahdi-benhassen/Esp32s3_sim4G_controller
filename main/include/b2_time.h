@@ -11,6 +11,7 @@ typedef struct {
     bool started;
     bool synchronized;
     char timezone[40];
+    char server[128];
 } b2_time_status_t;
 
 esp_err_t b2_time_start(void);

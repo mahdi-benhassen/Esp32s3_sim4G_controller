@@ -8,4 +8,21 @@ config B2_CELLULAR_PPP_ENABLED
         takes exclusive ownership of the modem UART and therefore replaces
         the legacy AT/SMS/GNSS service at application startup.
 
+config B2_ETHERNET_ENABLED
+    bool "Enable optional native W5500 Ethernet"
+    default n
+    depends on ETH_USE_SPI_ETHERNET && ETH_SPI_ETHERNET_W5500
+    help
+        Enable the native ESP-IDF W5500 SPI Ethernet adapter. The board
+        profile must provide verified SPI and interrupt/reset pins; this
+        option is disabled by default because the carrier PCB is unknown.
+
+config B2_I2C_EXPANDER_ENABLED
+    bool "Enable optional PCA9548A I2C bus expander"
+    default n
+    help
+        Enable the native PCA9548A channel-select helper. Existing sensors
+        use the unmodified base I2C bus; callers must select and deselect a
+        channel explicitly when an expander is installed.
+
 endmenu

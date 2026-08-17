@@ -16,6 +16,7 @@ static TaskHandle_t s_task;
 static bool s_started;
 static bool s_synchronized;
 static char s_timezone[B2_SETTINGS_TIMEZONE_MAX];
+static char s_server[B2_SETTINGS_SNTP_SERVER_MAX];
 
 static void time_task(void *arg)
 {
@@ -46,10 +47,11 @@ esp_err_t b2_time_start(void)
         return ESP_ERR_NOT_FOUND;
     }
     snprintf(s_timezone, sizeof(s_timezone), "%s", settings.timezone[0] != '\0' ? settings.timezone : "UTC0");
+    snprintf(s_server, sizeof(s_server), "%s", settings.sntp_server[0] != '\0' ? settings.sntp_server : "pool.ntp.org");
     setenv("TZ", s_timezone, 1);
     tzset();
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_setservername(0, s_server);
     esp_sntp_init();
     s_started = true;
     if (xTaskCreate(time_task, "b2_time", 3072, NULL, 2, &s_task) != pdPASS) {
@@ -57,7 +59,7 @@ esp_err_t b2_time_start(void)
         s_started = false;
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "SNTP synchronization started with TZ=%s", s_timezone);
+    ESP_LOGI(TAG, "SNTP synchronization started with server=%s TZ=%s", s_server, s_timezone);
     return ESP_OK;
 }
 
@@ -70,5 +72,6 @@ esp_err_t b2_time_get_status(b2_time_status_t *status)
     status->started = s_started;
     status->synchronized = s_synchronized;
     snprintf(status->timezone, sizeof(status->timezone), "%s", s_timezone);
+    snprintf(status->server, sizeof(status->server), "%s", s_server);
     return ESP_OK;
 }

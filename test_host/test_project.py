@@ -47,7 +47,11 @@ def main() -> int:
         "main/b2_ota.c",
         "main/b2_time.c",
         "main/b2_cellular.c",
+        "main/b2_ethernet.c",
+        "main/b2_i2c_expander.c",
         "main/include/b2_cellular.h",
+        "main/include/b2_ethernet.h",
+        "main/include/b2_i2c_expander.h",
         "main/Kconfig",
         "main/idf_component.yml",
         "main/include/b2_time.h",
@@ -66,7 +70,7 @@ def main() -> int:
         fail("root CMakeLists.txt does not use the ESP-IDF project build")
 
     main_cmake = require_file("main/CMakeLists.txt").read_text(encoding="utf-8")
-    for source in ("app_main.c", "b2_modem.c", "b2_relay.c", "b2_adc.c", "b2_security.c", "b2_rules.c", "b2_eventlog.c", "b2_ota.c", "b2_time.c", "b2_cellular.c", "esp_https_ota", "esp_https_server", "esp_modem"):
+    for source in ("app_main.c", "b2_modem.c", "b2_relay.c", "b2_adc.c", "b2_security.c", "b2_rules.c", "b2_eventlog.c", "b2_ota.c", "b2_time.c", "b2_cellular.c", "b2_ethernet.c", "b2_i2c_expander.c", "esp_https_ota", "esp_https_server", "esp_modem"):
         if source not in main_cmake:
             fail(f"main/CMakeLists.txt does not register {source}")
 
@@ -75,6 +79,10 @@ def main() -> int:
         fail("sdkconfig.defaults does not select ESP32-S3")
     if "CONFIG_B2_CELLULAR_PPP_ENABLED=n" not in sdkconfig:
         fail("cellular PPP must remain explicitly opt-in by default")
+    if "CONFIG_B2_ETHERNET_ENABLED=n" not in sdkconfig:
+        fail("W5500 Ethernet must remain explicitly opt-in by default")
+    if "CONFIG_B2_I2C_EXPANDER_ENABLED=n" not in sdkconfig:
+        fail("PCA9548A expansion must remain explicitly opt-in by default")
     if "CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=0" not in sdkconfig:
         fail("ESP32-S3 NVS HMAC eFuse key slot must be explicitly set to a valid slot")
 

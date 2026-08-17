@@ -48,6 +48,14 @@ typedef struct {
     int sd_miso;
     int sd_sclk;
     int sd_cs;
+    spi_host_device_t ethernet_spi_host;
+    int ethernet_mosi;
+    int ethernet_miso;
+    int ethernet_sclk;
+    int ethernet_cs;
+    int ethernet_irq;
+    int ethernet_reset;
+    uint8_t i2c_expander_address;
     bool relay_active_high;
     bool dry_input_active_low;
     bool button_active_low;

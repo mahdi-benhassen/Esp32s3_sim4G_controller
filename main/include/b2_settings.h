@@ -23,6 +23,7 @@ extern "C" {
 #define B2_SETTINGS_HTTP_TOKEN_MAX 65
 #define B2_SETTINGS_SMS_SECRET_MAX 33
 #define B2_SETTINGS_TIMEZONE_MAX 40
+#define B2_SETTINGS_SNTP_SERVER_MAX 128
 #define B2_SETTINGS_RULE_COUNT 8
 #define B2_SETTINGS_RULE_SMS_MAX 24
 #define B2_ANALOG_CALIBRATION_COUNT 4
@@ -99,6 +100,7 @@ typedef struct {
     float analog_offset[B2_ANALOG_CALIBRATION_COUNT];
     uint8_t rule_count;
     b2_rule_t rules[B2_SETTINGS_RULE_COUNT];
+    char sntp_server[B2_SETTINGS_SNTP_SERVER_MAX];
 } b2_settings_t;
 
 esp_err_t b2_settings_load(b2_settings_t *settings);

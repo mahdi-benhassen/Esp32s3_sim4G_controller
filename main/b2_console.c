@@ -24,7 +24,7 @@ static const char *TAG = "b2_console";
 
 static void print_help(void)
 {
-    printf("Commands: relay <1|2> <on|off|toggle>, input, adc <1..4>, cal <1..4> <gain> <offset>, rule <index> ..., rules, onewire <1..4>, modbus read/write, wifi [set/off], mqtt [set/off], modem [gnss|apn|pdp], http, time, events, ota status, storage, button, help\n");
+    printf("Commands: relay <1|2> <on|off|toggle>, input, adc <1..4>, cal <1..4> <gain> <offset>, rule <index> ..., rules, onewire <1..4>, modbus read/write, wifi [set/off], mqtt [set/off], modem [gnss|apn|pdp], http, time [server <hostname>], events, ota status, storage, button, help\n");
 }
 
 static void console_task(void *arg)
@@ -346,10 +346,25 @@ static void console_task(void *arg)
                    http.started ? "yes" : "no", http.tls ? "yes" : "no", http.port, http.tls ? "HTTPS-only" : "disabled");
             continue;
         }
+        if (strncmp(line, "time server ", 12) == 0) {
+            char server[B2_SETTINGS_SNTP_SERVER_MAX] = {0};
+            if (sscanf(line + 12, "%127s", server) == 1) {
+                b2_settings_t settings = {0};
+                esp_err_t err = b2_settings_load(&settings);
+                if (err == ESP_OK) {
+                    snprintf(settings.sntp_server, sizeof(settings.sntp_server), "%s", server);
+                    err = b2_settings_save(&settings);
+                }
+                printf("SNTP server %s; reboot to apply\\n", err == ESP_OK ? "saved" : esp_err_to_name(err));
+            } else {
+                printf("Usage: time server <hostname>\\n");
+            }
+            continue;
+        }
         if (strncmp(line, "time", 4) == 0) {
             b2_time_status_t time_status = {0};
             b2_time_get_status(&time_status);
-            printf("TIME started=%s synchronized=%s TZ=%s\n", time_status.started ? "yes" : "no", time_status.synchronized ? "yes" : "no", time_status.timezone);
+            printf("TIME started=%s synchronized=%s server=%s TZ=%s\\n", time_status.started ? "yes" : "no", time_status.synchronized ? "yes" : "no", time_status.server, time_status.timezone);
             continue;
         }
         if (strncmp(line, "events", 6) == 0) {

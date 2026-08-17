@@ -34,6 +34,14 @@ static const b2_board_config_t s_board = {
     .sd_miso = 36,
     .sd_sclk = 37,
     .sd_cs = 34,
+    .ethernet_spi_host = SPI3_HOST,
+    .ethernet_mosi = -1,
+    .ethernet_miso = -1,
+    .ethernet_sclk = -1,
+    .ethernet_cs = -1,
+    .ethernet_irq = -1,
+    .ethernet_reset = -1,
+    .i2c_expander_address = 0x70,
     .relay_active_high = true,
     .dry_input_active_low = true,
     .button_active_low = true,
@@ -61,6 +69,15 @@ esp_err_t b2_config_validate(const b2_board_config_t *config)
     ESP_RETURN_ON_FALSE(config->i2c_sda >= 0 && config->i2c_scl >= 0, ESP_ERR_INVALID_ARG, TAG, "invalid I2C pins");
     ESP_RETURN_ON_FALSE(config->modem_tx >= 0 && config->modem_rx >= 0, ESP_ERR_INVALID_ARG, TAG, "invalid modem UART pins");
     ESP_RETURN_ON_FALSE(config->rs485_tx >= 0 && config->rs485_rx >= 0, ESP_ERR_INVALID_ARG, TAG, "invalid RS485 UART pins");
+#if CONFIG_B2_ETHERNET_ENABLED
+    ESP_RETURN_ON_FALSE(config->ethernet_mosi >= 0 && config->ethernet_miso >= 0 && config->ethernet_sclk >= 0 &&
+                        config->ethernet_cs >= 0 && config->ethernet_irq >= -1 && config->ethernet_reset >= -1,
+                        ESP_ERR_INVALID_ARG, TAG, "invalid Ethernet profile");
+#endif
+#if CONFIG_B2_I2C_EXPANDER_ENABLED
+    ESP_RETURN_ON_FALSE(config->i2c_expander_address >= 0x08 && config->i2c_expander_address <= 0x77,
+                        ESP_ERR_INVALID_ARG, TAG, "invalid I2C expander address");
+#endif
 
     for (size_t i = 0; i < B2_RELAY_COUNT; ++i) {
         ESP_RETURN_ON_FALSE(!pin_is_reserved_boot_pin(config->relay[i]), ESP_ERR_INVALID_ARG, TAG, "relay uses boot GPIO");

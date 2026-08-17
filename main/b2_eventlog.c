@@ -6,6 +6,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "nvs.h"
 #include <stdio.h>
 #include <string.h>
@@ -13,6 +14,8 @@
 static const char *TAG = "b2_eventlog";
 static const char *NVS_NAMESPACE = "b2log";
 static const char *NVS_KEY = "ring";
+static const uint32_t FLUSH_DIRTY_THRESHOLD = 4U;
+static const int64_t FLUSH_INTERVAL_US = 10LL * 1000LL * 1000LL;
 
 typedef struct {
     uint32_t next;
@@ -22,9 +25,13 @@ typedef struct {
 
 static event_ring_t s_ring;
 static SemaphoreHandle_t s_lock;
+static TaskHandle_t s_flush_task;
 static bool s_ready;
+static uint32_t s_dirty_count;
+static int64_t s_last_append_us;
+static int64_t s_last_flush_us;
 
-static esp_err_t persist(void)
+static esp_err_t persist_locked(void)
 {
     nvs_handle_t handle;
     ESP_RETURN_ON_ERROR(nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle), TAG, "open event log namespace");
@@ -34,6 +41,34 @@ static esp_err_t persist(void)
     }
     nvs_close(handle);
     return err;
+}
+
+static void flush_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        if (!s_ready || s_lock == NULL) {
+            continue;
+        }
+        if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+            continue;
+        }
+        const int64_t now_us = esp_timer_get_time();
+        const bool due = s_dirty_count > 0U &&
+                         (s_dirty_count >= FLUSH_DIRTY_THRESHOLD ||
+                          now_us - s_last_append_us >= FLUSH_INTERVAL_US);
+        if (due) {
+            const esp_err_t err = persist_locked();
+            if (err == ESP_OK) {
+                s_dirty_count = 0;
+                s_last_flush_us = now_us;
+            } else {
+                ESP_LOGW(TAG, "deferred event log flush failed: %s", esp_err_to_name(err));
+            }
+        }
+        xSemaphoreGive(s_lock);
+    }
 }
 
 esp_err_t b2_event_log_init(void)
@@ -54,7 +89,17 @@ esp_err_t b2_event_log_init(void)
         err = ESP_OK;
     }
     s_ready = err == ESP_OK;
-    return err;
+    if (!s_ready) {
+        return err;
+    }
+    s_dirty_count = 0;
+    s_last_append_us = esp_timer_get_time();
+    s_last_flush_us = s_last_append_us;
+    if (xTaskCreate(flush_task, "b2_evt_flush", 3072, NULL, 2, &s_flush_task) != pdPASS) {
+        s_ready = false;
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
 }
 
 esp_err_t b2_event_log_append(b2_event_type_t type, uint8_t source, int32_t value, const char *text)
@@ -77,13 +122,33 @@ esp_err_t b2_event_log_append(b2_event_type_t type, uint8_t source, int32_t valu
     if (s_ring.count < B2_EVENT_LOG_CAPACITY) {
         s_ring.count++;
     }
-    esp_err_t err = persist();
+    s_dirty_count++;
+    s_last_append_us = event->timestamp_us;
+
     char line[160] = {0};
     snprintf(line, sizeof(line), "{\"seq\":%lu,\"ts_us\":%lld,\"type\":%u,\"source\":%u,\"value\":%ld,\"text\":\"%s\"}\n",
              (unsigned long)event->sequence, (long long)event->timestamp_us, event->type, event->source,
              (long)event->value, event->text);
-    if (b2_storage_is_mounted()) {
-        b2_storage_append_text("events.jsonl", line);
+    if (b2_storage_is_mounted() && b2_storage_append_text("events.jsonl", line) != ESP_OK) {
+        ESP_LOGW(TAG, "SD event mirror append failed");
+    }
+    xSemaphoreGive(s_lock);
+    return ESP_OK;
+}
+
+esp_err_t b2_event_log_flush(void)
+{
+    ESP_RETURN_ON_FALSE(s_ready && s_lock != NULL, ESP_ERR_INVALID_STATE, TAG, "event log not initialized");
+    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(500)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    esp_err_t err = ESP_OK;
+    if (s_dirty_count > 0U) {
+        err = persist_locked();
+        if (err == ESP_OK) {
+            s_dirty_count = 0;
+            s_last_flush_us = esp_timer_get_time();
+        }
     }
     xSemaphoreGive(s_lock);
     return err;

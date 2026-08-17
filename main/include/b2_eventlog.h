@@ -31,6 +31,7 @@ typedef struct {
 
 esp_err_t b2_event_log_init(void);
 esp_err_t b2_event_log_append(b2_event_type_t type, uint8_t source, int32_t value, const char *text);
+esp_err_t b2_event_log_flush(void);
 esp_err_t b2_event_log_get_newest(uint8_t index, b2_event_t *event);
 uint32_t b2_event_log_count(void);
 
