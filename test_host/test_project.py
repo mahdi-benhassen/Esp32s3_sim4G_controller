@@ -75,6 +75,8 @@ def main() -> int:
         fail("sdkconfig.defaults does not select ESP32-S3")
     if "CONFIG_B2_CELLULAR_PPP_ENABLED=n" not in sdkconfig:
         fail("cellular PPP must remain explicitly opt-in by default")
+    if "CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=0" not in sdkconfig:
+        fail("ESP32-S3 NVS HMAC eFuse key slot must be explicitly set to a valid slot")
 
     partition_rows = []
     with require_file("partitions.csv").open(newline="", encoding="utf-8") as handle:
